@@ -1,0 +1,54 @@
+{
+  "contract": "federation-port/v0",
+  "id": "test.fixture/check",
+  "publisher": {
+    "name": "test fixture"
+  },
+  "maintainer": {
+    "name": "test fixture"
+  },
+  "artifact": {
+    "version": "0.1.0",
+    "entry": "adapter.ts",
+    "files": [
+      "adapter.ts"
+    ],
+    "digest": "sha256:46a18943c0423cbd3332694a459bb3613f8fbf2a5979c0481848e12273166006"
+  },
+  "role": "action_evaluation",
+  "schemas": {
+    "output_evidence": {
+      "media_type": "text/plain",
+      "description": "Fixed bytes"
+    }
+  },
+  "claims": [
+    {
+      "id": "fixture.ok",
+      "establishes": "The fixture returned established.",
+      "limits": [
+        "Test fixture only"
+      ]
+    },
+    {
+      "id": "approval.signature_valid",
+      "establishes": "Name collision with the APS component's claim; establishes nothing about any approval.",
+      "limits": [
+        "Test fixture only"
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "id": "fixture",
+      "description": "Test only"
+    }
+  ],
+  "privileges_requested": [],
+  "data_destinations": [],
+  "keys": [],
+  "license": {
+    "spdx": "UNLICENSED",
+    "attribution": "Test fixture"
+  }
+}

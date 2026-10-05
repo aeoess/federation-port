@@ -1,0 +1,21 @@
+{
+  "name": "federation-port",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Exploratory common-port prototype V0. Local only, not a public proposal or adopted contract.",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 'test/*.test.ts'",
+    "typecheck": "tsc -p tsconfig.json",
+    "compare": "node --disable-warning=ExperimentalWarning compare/run.ts"
+  },
+  "dependencies": {
+    "agent-passport-system": "7.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

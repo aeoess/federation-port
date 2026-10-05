@@ -1,0 +1,83 @@
+{
+  "contract": "federation-port/v0",
+  "id": "example.sim/refund-executor",
+  "publisher": {
+    "name": "federation-port local simulator"
+  },
+  "maintainer": {
+    "name": "federation-port local simulator"
+  },
+  "artifact": {
+    "version": "0.1.0",
+    "entry": "adapter.ts",
+    "files": [
+      "adapter.ts"
+    ],
+    "digest": "sha256:b8336e7c98438f7237f653ce0daec1c1e30f9b9bd2b4072fe42d7d3648a6e161"
+  },
+  "role": "execution",
+  "schemas": {
+    "output_evidence": {
+      "media_type": "application/json",
+      "description": "Raw provider HTTP response body bytes, empty when no response was received."
+    },
+    "execute_input": {
+      "type": "object"
+    }
+  },
+  "claims": [],
+  "profiles": [
+    {
+      "id": "sim-refund-v1",
+      "description": "POST /v1/payments/{payment_id}/refunds with Idempotency-Key = operation id."
+    }
+  ],
+  "tools": [
+    {
+      "name": "refund",
+      "description": "Refund part or all of a captured payment.",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "payment_id",
+          "amount_minor",
+          "currency"
+        ],
+        "properties": {
+          "payment_id": {
+            "type": "string",
+            "pattern": "^pay_[A-Za-z0-9]+$"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          }
+        }
+      }
+    }
+  ],
+  "privileges_requested": [
+    "secret:provider_api_key",
+    "side_effect:refund"
+  ],
+  "data_destinations": [
+    "http://127.0.0.1:*"
+  ],
+  "keys": [
+    {
+      "id": "provider_api_key",
+      "purpose": "Bearer credential for the simulated provider",
+      "held_by": "customer",
+      "lifecycle": "Generated per test run, never persisted"
+    }
+  ],
+  "license": {
+    "spdx": "UNLICENSED",
+    "attribution": "Local prototype, not distributed"
+  }
+}

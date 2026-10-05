@@ -1,0 +1,94 @@
+{
+  "contract": "federation-port/v0",
+  "id": "aeoess.aps/exact-approval-authority",
+  "publisher": {
+    "name": "AEOESS (prototype, local only)"
+  },
+  "maintainer": {
+    "name": "AEOESS (prototype, local only)"
+  },
+  "artifact": {
+    "version": "0.1.0",
+    "entry": "adapter.ts",
+    "files": [
+      "adapter.ts"
+    ],
+    "digest": "sha256:6c991b7da1965e59107e397dafe3ae50b1cae3bb0780d430099e5d9eabe5a687",
+    "dependencies": {
+      "agent-passport-system": "7.2.1"
+    }
+  },
+  "role": "authority_evidence",
+  "schemas": {
+    "check_evidence": {
+      "media_type": "application/json",
+      "description": "UTF-8 JSON {input: aps-action-ref-v2 input, approval: aps-receipt-v1 aps:policy-decision:v1}"
+    },
+    "output_evidence": {
+      "media_type": "application/json",
+      "description": "The input evidence bytes, returned unmodified"
+    }
+  },
+  "claims": [
+    {
+      "id": "approval.signature_valid",
+      "establishes": "The approval is a valid aps:policy-decision:v1 receipt signed by a key the customer policy trusts for the configured boundary identity.",
+      "limits": [
+        "Key possession only; says nothing about the signer's general trustworthiness",
+        "No revocation check",
+        "The predecessor action-intent receipt is not verified"
+      ]
+    },
+    {
+      "id": "approval.id_matches_request",
+      "establishes": "The receipt_id of the presented approval equals the approval_id the runtime will consume.",
+      "limits": [
+        "Does not check whether the approval was already used; that is the runtime's consumption record"
+      ]
+    },
+    {
+      "id": "approval.permit_verdict",
+      "establishes": "The decision verdict is permit.",
+      "limits": [
+        "narrow decisions are reported unsupported because constraints are not evaluated"
+      ]
+    },
+    {
+      "id": "approval.binds_exact_action",
+      "establishes": "The action args and target recompute to the approval's aps-action-ref-v2 digest under the exact-refund profile.",
+      "limits": [
+        "Exact profile only, not a ceiling",
+        "Target template is candidate profile text, not a published profile",
+        "Delegation reference is not resolved",
+        "JSON.parse does not refuse duplicate member names"
+      ]
+    },
+    {
+      "id": "approval.unexpired",
+      "establishes": "The evaluation instant is not after the decision's valid_until.",
+      "limits": [
+        "Uses the runtime clock; no trusted time source"
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "id": "exact-refund-v0",
+      "description": "One exact refund: payment_id, amount_minor and currency equal to the approved payload."
+    }
+  ],
+  "privileges_requested": [],
+  "data_destinations": [],
+  "keys": [
+    {
+      "id": "operator-approval-keys",
+      "purpose": "Verification of approval signatures; public keys resolved from customer policy config",
+      "held_by": "customer",
+      "lifecycle": "Rotated by the customer policy; no key ids are embedded in this component"
+    }
+  ],
+  "license": {
+    "spdx": "Apache-2.0",
+    "attribution": "Uses agent-passport-system 7.2.1 (Apache-2.0)"
+  }
+}
