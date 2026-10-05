@@ -1,0 +1,51 @@
+{
+  "contract": "federation-port/v0",
+  "id": "example.tools/definition-pin-check",
+  "publisher": {
+    "name": "federation-port prototype (second adapter, post-freeze)"
+  },
+  "maintainer": {
+    "name": "federation-port prototype"
+  },
+  "artifact": {
+    "version": "0.1.0",
+    "entry": "adapter.ts",
+    "files": [
+      "adapter.ts"
+    ],
+    "digest": "sha256:0ff7346a4ca72551ab85a40a2973d5b01d93188db2791a104c1a32193285a71d"
+  },
+  "role": "tool_admission",
+  "schemas": {
+    "output_evidence": {
+      "media_type": "application/json",
+      "description": "The tool definition bytes exactly as served by the provider, empty if the tool is not configured"
+    }
+  },
+  "claims": [
+    {
+      "id": "tool.definition_matches_pin",
+      "establishes": "The bytes the provider serves as its tool definition, fetched at admission, hash to the customer's pinned SHA-256.",
+      "limits": [
+        "Byte equality only; says nothing about whether the tool behaves as described",
+        "Checked at admission, not at dispatch; a change between the two is not detected",
+        "Trusts the definition endpoint to serve what the provider executes"
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "id": "sha256-bytes-v0",
+      "description": "SHA-256 over the raw HTTP response body of the definition URL"
+    }
+  ],
+  "privileges_requested": [],
+  "data_destinations": [
+    "http://127.0.0.1:*"
+  ],
+  "keys": [],
+  "license": {
+    "spdx": "UNLICENSED",
+    "attribution": "Local prototype, not distributed"
+  }
+}
