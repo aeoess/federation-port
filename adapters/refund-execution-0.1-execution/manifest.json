@@ -1,0 +1,127 @@
+{
+  "contract": "federation-port/v0",
+  "id": "example.profile/refund-execution-0.1-executor",
+  "publisher": {
+    "name": "federation-port prototype (refund-execution/0.1 envelope profile, local only)"
+  },
+  "maintainer": {
+    "name": "federation-port prototype"
+  },
+  "artifact": {
+    "version": "0.1.0",
+    "entry": "adapter.ts",
+    "files": [
+      "adapter.ts"
+    ],
+    "digest": "sha256:6f9267aa3e01b57bda45463461b1c35a4aa2b43f1da107feee02c4dc80bab640"
+  },
+  "role": "execution",
+  "schemas": {
+    "output_evidence": {
+      "media_type": "application/json",
+      "description": "The native refund-execution-result/0.1 response body bytes, unmodified, from the response that decided the outcome. Empty when no response was received."
+    },
+    "execute_input": {
+      "type": "object",
+      "description": "The complete refund-execution/0.1 handoff, sent unchanged."
+    }
+  },
+  "claims": [],
+  "profiles": [
+    {
+      "id": "refund-execution/0.1",
+      "description": "action.args is the full handoff. POST /refund-execution/0.1/execute, and on attempts after the first POST /refund-execution/0.1/reconcile first. observed_success maps to provider_confirmed, observed_failure to failed (retriable), unresolved to unknown, only after the result's schema, operation_id, arguments_digest and attempt_id validate. Anything else is unknown."
+    }
+  ],
+  "tools": [
+    {
+      "name": "refund",
+      "description": "Execute one admitted refund described by a refund-execution/0.1 handoff.",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema",
+          "operation_id",
+          "tool",
+          "arguments",
+          "approval_ref",
+          "pic_evidence_ref",
+          "aps_evidence_ref"
+        ],
+        "properties": {
+          "schema": {
+            "type": "string",
+            "enum": [
+              "refund-execution/0.1"
+            ]
+          },
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[!-~]{1,200}$"
+          },
+          "tool": {
+            "type": "string",
+            "enum": [
+              "refund"
+            ]
+          },
+          "arguments": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "payment_id",
+              "currency",
+              "amount_minor"
+            ],
+            "properties": {
+              "payment_id": {
+                "type": "string",
+                "pattern": "^pay_[A-Za-z0-9]+$"
+              },
+              "currency": {
+                "type": "string",
+                "pattern": "^[A-Z]{3}$"
+              },
+              "amount_minor": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "approval_ref": {
+            "type": "string",
+            "pattern": "^[!-~]{1,256}$"
+          },
+          "pic_evidence_ref": {
+            "type": "string",
+            "pattern": "^[!-~]{1,256}$"
+          },
+          "aps_evidence_ref": {
+            "type": "string",
+            "pattern": "^[!-~]{1,256}$"
+          }
+        }
+      }
+    }
+  ],
+  "privileges_requested": [
+    "secret:execution_api_key",
+    "side_effect:refund"
+  ],
+  "data_destinations": [
+    "http://127.0.0.1:*"
+  ],
+  "keys": [
+    {
+      "id": "execution_api_key",
+      "purpose": "Bearer credential for the local execution simulator. Synthetic.",
+      "held_by": "customer",
+      "lifecycle": "Generated per test run, never persisted"
+    }
+  ],
+  "license": {
+    "spdx": "UNLICENSED",
+    "attribution": "Local prototype, not distributed"
+  }
+}

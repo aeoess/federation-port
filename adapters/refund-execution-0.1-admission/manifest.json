@@ -1,0 +1,133 @@
+{
+  "contract": "federation-port/v0",
+  "id": "example.profile/refund-execution-0.1-admission",
+  "publisher": {
+    "name": "federation-port prototype (refund-execution/0.1 envelope profile, local only)"
+  },
+  "maintainer": {
+    "name": "federation-port prototype"
+  },
+  "artifact": {
+    "version": "0.1.0",
+    "entry": "adapter.ts",
+    "files": [
+      "adapter.ts"
+    ],
+    "digest": "sha256:1f69dc39452ddf0bf8c23bd2f894d4c76f598254fd5fa72eec287fa7ef1d810d",
+    "dependencies": {
+      "agent-passport-system": "7.2.1"
+    }
+  },
+  "role": "authority_evidence",
+  "schemas": {
+    "check_evidence": {
+      "media_type": "application/json",
+      "description": "UTF-8 JSON {input: aps-action-ref-v2 input, approval: aps-receipt-v1 aps:policy-decision:v1} for the nested arguments tuple"
+    },
+    "output_evidence": {
+      "media_type": "application/json",
+      "description": "The input evidence bytes, returned unmodified"
+    }
+  },
+  "claims": [
+    {
+      "id": "handoff.well_formed",
+      "establishes": "action.args is a refund-execution/0.1 handoff with exactly the profile's fields, tool refund, and nested arguments payment_id, currency and integer amount_minor of at least 1.",
+      "limits": [
+        "Shape only; says nothing about who produced the handoff",
+        "The handoff is not authenticated"
+      ]
+    },
+    {
+      "id": "handoff.operation_id_matches",
+      "establishes": "The handoff operation_id equals the port operation id being admitted.",
+      "limits": [
+        "Equality of labels only"
+      ]
+    },
+    {
+      "id": "handoff.approval_ref_matches",
+      "establishes": "The handoff approval_ref equals the approval id the runtime will consume.",
+      "limits": [
+        "Equality of labels only; the approval itself is checked by the aps.* claims"
+      ]
+    },
+    {
+      "id": "aps_evidence_ref.well_formed",
+      "establishes": "The handoff carries an aps_evidence_ref that is a printable ASCII string of 1 to 256 characters.",
+      "limits": [
+        "A reference, not verified content; it is not resolved or compared with the APS evidence bytes",
+        "Bound to the operation only because it is part of the action digest"
+      ]
+    },
+    {
+      "id": "aps.signature_valid",
+      "establishes": "The approval is a valid aps:policy-decision:v1 receipt signed by a key the customer policy trusts for the configured boundary identity.",
+      "limits": [
+        "Key possession only; says nothing about the signer's general trustworthiness",
+        "No revocation check",
+        "The predecessor action-intent receipt is not verified"
+      ]
+    },
+    {
+      "id": "aps.id_matches_request",
+      "establishes": "The receipt_id of the presented approval equals the approval_id the runtime will consume.",
+      "limits": [
+        "Does not check whether the approval was already used; that is the runtime's consumption record"
+      ]
+    },
+    {
+      "id": "aps.permit_verdict",
+      "establishes": "The decision verdict is permit.",
+      "limits": [
+        "narrow decisions are reported unsupported because constraints are not evaluated"
+      ]
+    },
+    {
+      "id": "aps.binds_nested_arguments",
+      "establishes": "The nested arguments tuple and its target recompute to the approval's aps-action-ref-v2 digest under the exact-refund profile.",
+      "limits": [
+        "Covers the nested tuple only, not the outer handoff fields",
+        "Exact profile only, not a ceiling",
+        "Target template is candidate profile text, not a published profile",
+        "Delegation reference is not resolved",
+        "JSON.parse does not refuse duplicate member names"
+      ]
+    },
+    {
+      "id": "aps.unexpired",
+      "establishes": "The evaluation instant is not after the decision's valid_until.",
+      "limits": [
+        "Uses the runtime clock; no trusted time source"
+      ]
+    },
+    {
+      "id": "pic.verified",
+      "establishes": "Never established by this component: PIC verification is not implemented.",
+      "limits": [
+        "Always reported not_established with a reason",
+        "pic_evidence_ref is carried and bound to the operation through the action digest but never resolved or verified"
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "id": "refund-execution/0.1-admission",
+      "description": "action.args is the full handoff. Linkage to the port operation and approval, and APS authority over the nested arguments tuple only."
+    }
+  ],
+  "privileges_requested": [],
+  "data_destinations": [],
+  "keys": [
+    {
+      "id": "operator-approval-keys",
+      "purpose": "Verification of approval signatures; public keys resolved from customer policy config. Synthetic in tests.",
+      "held_by": "customer",
+      "lifecycle": "Rotated by the customer policy; no key ids are embedded in this component"
+    }
+  ],
+  "license": {
+    "spdx": "UNLICENSED",
+    "attribution": "Local prototype, not distributed. Uses agent-passport-system 7.2.1 (Apache-2.0)"
+  }
+}
