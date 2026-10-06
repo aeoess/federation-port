@@ -1,4 +1,4 @@
-# federation-port (V0, private prototype)
+# federation-port (V0b, private prototype)
 
 Exploratory local prototype of a common port: a small adapter contract, a runtime that admits or refuses an
 action before its side effect, and a local refund simulator. Not a public proposal, not an adopted contract.
