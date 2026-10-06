@@ -10,6 +10,8 @@ export interface DirectConfig {
   boundaryIdentity: string
   trustedKeys: Record<string, string>
   targetTemplate: string
+  /** Fault injection for the comparison only: awaited after the approval check, before the provider call. */
+  afterCheck?: () => Promise<void>
 }
 
 export type DirectResult = { ok: true; refund_id: string } | { ok: false; reason: string }
@@ -49,6 +51,7 @@ export function createDirectRefunder(cfg: DirectConfig) {
     if (!evidence) return { ok: false, reason: 'no_approval' }
     const refused = admit(args, evidence, new Date())
     if (refused) return { ok: false, reason: refused }
+    await cfg.afterCheck?.()
     const key = (JSON.parse(new TextDecoder().decode(evidence)) as { approval: ReceiptV1 }).approval.receipt_id
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {

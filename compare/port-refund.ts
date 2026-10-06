@@ -22,7 +22,7 @@ export interface PortConfig {
   toolDefinitionSha256?: string
 }
 
-export async function createPortRefunder(cfg: PortConfig) {
+export async function createPortRefunder(cfg: PortConfig, o: { extraWorkflow?: string } = {}) {
   const APS = 'aeoess.aps/exact-approval-authority', EXEC = 'example.sim/refund-executor', TOOL = 'example.tools/definition-pin-check'
   const policy: CustomerPolicy = {
     policy_id: 'comparison',
@@ -43,10 +43,11 @@ export async function createPortRefunder(cfg: PortConfig) {
       },
     },
   }
+  if (o.extraWorkflow) policy.workflows[o.extraWorkflow] = { ...policy.workflows.refund }
   const rt = await Runtime.create({ policy, dbPath: cfg.dbPath, secrets: { provider_api_key: cfg.apiKey } })
   return {
     rt,
-    refund: (operationId: string, approvalId: string | undefined, args: Record<string, unknown>, evidence: Uint8Array | undefined) =>
-      rt.submit({ workflow: 'refund', operation_id: operationId, approval_id: approvalId, action: { tool: 'refund', args }, evidence: evidence ? { [APS]: evidence } : {} }),
+    refund: (operationId: string, approvalId: string | undefined, args: Record<string, unknown>, evidence: Uint8Array | undefined, workflow = 'refund') =>
+      rt.submit({ workflow, operation_id: operationId, approval_id: approvalId, action: { tool: 'refund', args }, evidence: evidence ? { [APS]: evidence } : {} }),
   }
 }
