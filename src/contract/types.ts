@@ -93,6 +93,8 @@ export interface Action {
 export interface CheckInput {
   operation_id: string
   workflow: string
+  /** Customer-supplied tenant id the operation is bound to, if any. */
+  tenant?: string
   approval_id?: string
   /** The exact action the runtime will dispatch if admitted. A copy; mutation has no effect. */
   action: Action

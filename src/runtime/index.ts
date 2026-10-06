@@ -3,4 +3,4 @@ export type { SubmitRequest, SubmitResult, RecordedStatus, RuntimeOptions } from
 export { loadComponent, LoadError, destinationAllowed } from './loader.ts'
 export { canonicalJson, digestJson, artifactDigest, sha256 } from './canonical.ts'
 export type { CustomerPolicy, ComponentPin, WorkflowPolicy, ClaimRef } from './policy.ts'
-export type { OperationState, AdmissionRecord, ClaimRecord } from './store.ts'
+export type { OperationState, AdmissionRecord, ClaimRecord, ExecutionContext } from './store.ts'

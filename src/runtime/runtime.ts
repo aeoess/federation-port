@@ -6,12 +6,13 @@ import type { LoadedComponent } from './loader.ts'
 import type { ClaimRef, CustomerPolicy, WorkflowPolicy } from './policy.ts'
 import { validate } from './schema.ts'
 import { Store } from './store.ts'
-import type { AdmissionRecord, ClaimRecord, OperationRow, OperationState } from './store.ts'
+import type { AdmissionRecord, ClaimRecord, ExecutionContext, OperationRow, OperationState } from './store.ts'
 
 export interface SubmitRequest {
   workflow: string
-  /** Logical operation id chosen by the caller. Reuse it to retry. */
+  /** Logical operation id chosen by the caller. Reuse it to retry, with the same workflow, tenant, action and approval. */
   operation_id: string
+  tenant?: string
   approval_id?: string
   action: Action
   /** Native evidence bytes, addressed by component id. Each component sees only its own entry. */
@@ -153,12 +154,44 @@ export class Runtime {
     })
   }
 
+  /**
+   * Everything an operation's dispatch depends on besides secrets: policy id, the workflow's
+   * definition, and each component's pin and configuration (as digests). Stored at admission;
+   * a retry under a different context is refused instead of being rerouted.
+   */
+  private executionContext(name: string, wf: WorkflowPolicy): ExecutionContext {
+    return {
+      policy_id: this.policy.policy_id,
+      workflow: name,
+      workflow_digest: digestJson(wf),
+      components: [...this.componentsFor(wf), wf.executor].map(id => {
+        const pin = this.policy.components[id]
+        return { id, version: pin.version, manifest_digest: pin.manifest_digest, artifact_digest: pin.artifact_digest, config_digest: digestJson(pin.config ?? {}) }
+      }),
+    }
+  }
+
+  private contextChanges(stored: ExecutionContext, now: ExecutionContext): string[] {
+    const out: string[] = []
+    if (stored.policy_id !== now.policy_id) out.push('policy_id')
+    if (stored.workflow_digest !== now.workflow_digest) out.push('workflow_definition')
+    for (const c of stored.components) {
+      const n = now.components.find(x => x.id === c.id)
+      if (!n || n.version !== c.version || n.manifest_digest !== c.manifest_digest || n.artifact_digest !== c.artifact_digest) out.push(`component_pin:${c.id}`)
+      else if (n.config_digest !== c.config_digest) out.push(`component_config:${c.id}`)
+    }
+    for (const n of now.components) if (!stored.components.some(c => c.id === n.id)) out.push(`component_pin:${n.id}`)
+    return out.map(x => `operation_context_changed:${x}`)
+  }
+
   async submit(req: SubmitRequest): Promise<SubmitResult> {
     const wf = this.policy.workflows[req.workflow]
     const opId = req.operation_id
     const refuseEarly = (reasons: string[]): SubmitResult => ({ status: 'refused', operation_id: opId, reasons, claims: [] })
     if (!wf) return refuseEarly(['unknown_workflow'])
     if (typeof opId !== 'string' || opId.length === 0 || opId.length > 200) return refuseEarly(['operation_id_invalid'])
+    const tenant = req.tenant ?? null
+    if (tenant !== null && (typeof tenant !== 'string' || tenant.length === 0 || tenant.length > 200)) return refuseEarly(['tenant_invalid'])
     if (req.action?.tool !== wf.tool) return refuseEarly(['tool_not_in_workflow'])
 
     let actionDigest: string
@@ -170,8 +203,9 @@ export class Runtime {
     const approvalId = req.approval_id ?? null
 
     // Retry path: same logical operation. Admission and consumption already happened once.
+    const asked = { workflow: req.workflow, tenant, actionDigest, approvalId }
     const existing = this.store.getOperation(opId)
-    if (existing) return this.retry(existing, actionDigest, approvalId, wf, action)
+    if (existing) return this.retry(existing, asked, action)
 
     const checkerIds = this.componentsFor(wf)
     const components = this.describeComponents([...checkerIds, wf.executor])
@@ -194,7 +228,7 @@ export class Runtime {
       if (by !== undefined) return refuse(['approval_already_consumed'])
     }
 
-    const { claims, evidence, deadlines } = await this.evaluate(wf, checkerIds, { opId, workflow: req.workflow, approvalId, action, evidence: req.evidence ?? {} })
+    const { claims, evidence, deadlines } = await this.evaluate(wf, checkerIds, { opId, workflow: req.workflow, tenant, approvalId, action, evidence: req.evidence ?? {} })
     const reasons = claims.filter(c => c.requirement === 'required' && c.status !== 'established')
       .map(c => `required_claim_${c.status}:${c.component}#${c.claim}${c.reason ? ':' + c.reason : ''}`)
     if (reasons.length) return refuse(reasons, claims, evidence, checkerIds)
@@ -207,25 +241,33 @@ export class Runtime {
 
     // One transaction re-reads the clock after taking the write lock, checks the deadline, consumes
     // the approval, creates the operation and claims its first dispatch. No await runs inside it.
-    const admitted = this.store.admit({ operation_id: opId, workflow: req.workflow, approval_id: approvalId, action_digest: actionDigest, valid_until_ms: deadlineMs },
+    const admitted = this.store.admit({ operation_id: opId, workflow: req.workflow, tenant, approval_id: approvalId, action_digest: actionDigest,
+      valid_until_ms: deadlineMs, context: this.executionContext(req.workflow, wf) },
       { at, decision: 'admitted', reasons: [], components, claims }, evidence, this.describeComponents(checkerIds), exec.id, wf.execute_timeout_ms + 1000)
     if (!admitted.ok) {
-      if (admitted.conflict === 'operation_exists') return this.retry(this.store.getOperation(opId)!, actionDigest, approvalId, wf, action)
+      if (admitted.conflict === 'operation_exists') return this.retry(this.store.getOperation(opId)!, asked, action)
       return { status: 'refused', operation_id: opId, reasons: [admitted.conflict], claims }
     }
     return this.execute(opId, wf, action, admitted.attempt)
   }
 
-  private retry(row: OperationRow, actionDigest: string, approvalId: string | null, wf: WorkflowPolicy, action: Action): Promise<SubmitResult> | SubmitResult {
-    if (row.action_digest !== actionDigest || row.approval_id !== approvalId) {
-      return { status: 'refused', operation_id: row.operation_id, reasons: ['operation_id_reused_for_different_action'], claims: [] }
-    }
+  /** Retry of an admitted operation: only under the workflow, tenant, action, approval and execution context it was admitted with. */
+  private retry(row: OperationRow, asked: { workflow: string; tenant: string | null; actionDigest: string; approvalId: string | null }, action: Action): Promise<SubmitResult> | SubmitResult {
+    const refuse = (reasons: string[]): SubmitResult => ({ status: 'refused', operation_id: row.operation_id, reasons, claims: [] })
+    if (asked.workflow !== row.workflow) return refuse(['operation_workflow_mismatch'])
+    if (asked.tenant !== row.tenant) return refuse(['operation_tenant_mismatch'])
+    if (row.action_digest !== asked.actionDigest || row.approval_id !== asked.approvalId) return refuse(['operation_id_reused_for_different_action'])
+    const wf = this.policy.workflows[row.workflow]
+    const stored = JSON.parse(row.context) as ExecutionContext
+    if (digestJson(stored) !== row.context_digest) return refuse(['operation_context_corrupt'])
+    const changed = this.contextChanges(stored, this.executionContext(row.workflow, wf))
+    if (changed.length) return refuse(changed)
     const integrity = this.integrity([wf.executor])
-    if (integrity.length) return { status: 'refused', operation_id: row.operation_id, reasons: integrity, claims: [] }
+    if (integrity.length) return refuse(integrity)
     return this.dispatch(row.operation_id, wf, action)
   }
 
-  private async evaluate(wf: WorkflowPolicy, ids: string[], s: { opId: string; workflow: string; approvalId: string | null; action: Action; evidence: Record<string, Uint8Array> }):
+  private async evaluate(wf: WorkflowPolicy, ids: string[], s: { opId: string; workflow: string; tenant: string | null; approvalId: string | null; action: Action; evidence: Record<string, Uint8Array> }):
     Promise<{ claims: ClaimRecord[]; evidence: Map<string, Uint8Array>; deadlines: Map<string, number> }> {
     const now = this.clock().toISOString()
     const evidence = new Map<string, Uint8Array>()
@@ -235,7 +277,7 @@ export class Runtime {
       const c = this.components.get(id)!
       const own = s.evidence[id]
       const input = deepFreeze({
-        operation_id: s.opId, workflow: s.workflow, ...(s.approvalId !== null ? { approval_id: s.approvalId } : {}),
+        operation_id: s.opId, workflow: s.workflow, ...(s.tenant !== null ? { tenant: s.tenant } : {}), ...(s.approvalId !== null ? { approval_id: s.approvalId } : {}),
         action: structuredClone(s.action), ...(own ? { evidence: new Uint8Array(own) } : {}), now,
       })
       try {
@@ -305,6 +347,9 @@ export class Runtime {
       operation_id: opId,
       policy_id: this.policy.policy_id,
       workflow: row?.workflow ?? null,
+      tenant: row?.tenant ?? null,
+      execution_context: row ? JSON.parse(row.context) : null,
+      execution_context_digest: row?.context_digest ?? null,
       action_digest: row?.action_digest ?? null,
       approval_id: row?.approval_id ?? null,
       state: row?.state ?? 'not_admitted',
