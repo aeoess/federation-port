@@ -1,4 +1,6 @@
-import { cpSync, mkdtempSync, readFileSync } from 'node:fs'
+import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -85,10 +87,12 @@ export async function setup(o: EnvOptions = {}): Promise<Env> {
   const policy = buildPolicy(operator, provider.url, o)
   const dbPath = o.dbPath ?? join(tmp(), 'port.db')
   const rt = await Runtime.create({ policy, dbPath, secrets: { provider_api_key: apiKey } })
-  return {
+  const env: Env = {
     provider, operator, policy, rt, dbPath, apiKey,
-    async close() { rt.close(); if (!o.provider) await provider.close() },
+    // Closes whichever runtime the test left in env.rt, not only the first one.
+    async close() { env.rt.close(); if (!o.provider) await provider.close() },
   }
+  return env
 }
 
 let n = 0
@@ -100,3 +104,52 @@ export function request(env: Env, args: Record<string, unknown> = { ...APPROVED_
   const a = env.operator.issue(approved, issueOpts)
   return { a, req: { workflow: 'refund', operation_id: opId(), approval_id: a.approval_id, action: { tool: 'refund', args }, evidence: { [APS]: a.evidence } } }
 }
+
+/** Wraps a loaded check component so its result arrives `ms` after it was computed. */
+export function delayCheck(rt: Runtime, id: string, ms: number | (() => Promise<void>)): void {
+  const c = rt.component(id)!
+  const original = c.adapter.check!.bind(c.adapter)
+  c.adapter.check = async input => {
+    const out = await original(input)
+    if (typeof ms === 'number') await new Promise(ok => setTimeout(ok, ms))
+    else await ms()
+    return out
+  }
+}
+
+/** Replace env.rt with a runtime on the same store under `policy`. */
+export async function restart(env: Env, policy: CustomerPolicy, clock?: () => Date): Promise<void> {
+  env.rt.close()
+  env.rt = await Runtime.create({ policy, dbPath: env.dbPath, secrets: { provider_api_key: env.apiKey }, ...(clock ? { clock } : {}) })
+}
+
+/** Spawn a node script; resolves `line(x)` when stdout prints that line, `done` on exit. */
+export function child(script: string, args: string[], env: Record<string, string> = {}) {
+  const p = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', script, ...args], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'inherit'] })
+  let out = ''
+  const waiters: [string, () => void][] = []
+  p.stdout.on('data', d => {
+    out += d
+    for (const [l, ok] of waiters) if (out.split('\n').includes(l)) ok()
+  })
+  const done = new Promise<{ code: number | null; signal: NodeJS.Signals | null; lines: string[] }>(ok =>
+    p.on('exit', (code, signal) => ok({ code, signal, lines: out.split('\n').filter(Boolean) })))
+  return {
+    proc: p, done,
+    line: (l: string) => new Promise<void>(ok => { if (out.split('\n').includes(l)) ok(); else waiters.push([l, ok]) }),
+  }
+}
+
+export function writeJob(env: Env, req: ReturnType<typeof request>['req'], extra: Record<string, unknown> = {}): string {
+  const job = join(tmp(), 'job.json')
+  const evidence = Object.fromEntries(Object.entries(req.evidence).map(([k, v]) => [k, Buffer.from(v).toString('base64')]))
+  writeFileSync(job, JSON.stringify({ policy: env.policy, dbPath: env.dbPath, request: { ...req, evidence }, ...extra }))
+  return job
+}
+export const WORKER = join(ROOT, 'test/fixtures/port-worker.ts')
+export async function runWorker(env: Env, job: string) {
+  const r = await child(WORKER, [job], { FP_PROVIDER_KEY: env.apiKey }).done
+  assert.equal(r.code, 0)
+  return JSON.parse(r.lines.at(-1)!)
+}
+

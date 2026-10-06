@@ -106,6 +106,13 @@ export interface CheckOutput {
   /** Native evidence bytes the component relied on, unmodified by the runtime. */
   evidence: Uint8Array
   claims: ClaimResult[]
+  /**
+   * Last instant at which the established claims may be acted on, exact UTC milliseconds
+   * (YYYY-MM-DDTHH:MM:SS.sssZ). Inclusive: admissible while now <= valid_until. The runtime
+   * re-checks it against a fresh clock inside the admission write. Any other form is a protocol
+   * violation and makes every claim of this component unavailable.
+   */
+  valid_until?: string
 }
 
 export interface ExecuteOp {

@@ -58,7 +58,8 @@ export function createAdapter(ctx: AdapterContext): Adapter {
       else if (input.now > result.valid_until) set('approval.unexpired', 'not_established', 'approval_expired')
       else set('approval.unexpired', 'established')
 
-      return { evidence, claims: CLAIMS.map(c => out[c]) }
+      // Reported so the runtime re-checks expiry against its own clock at the admission write.
+      return { evidence, claims: CLAIMS.map(c => out[c]), ...(typeof result.valid_until === 'string' ? { valid_until: result.valid_until } : {}) }
     },
   }
 }

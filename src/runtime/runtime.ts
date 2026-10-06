@@ -33,6 +33,14 @@ export interface RuntimeOptions {
   clock?: () => Date
 }
 
+const EXACT_UTC_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+/** Milliseconds for an exact UTC millisecond instant, undefined for any other form (including impossible dates). */
+export function parseExactInstant(v: unknown): number | undefined {
+  if (typeof v !== 'string' || !EXACT_UTC_MS.test(v)) return undefined
+  const ms = Date.parse(v)
+  return Number.isFinite(ms) && new Date(ms).toISOString() === v ? ms : undefined
+}
+
 const withTimeout = <T>(p: Promise<T>, ms: number, label: string): Promise<T> => {
   let t: NodeJS.Timeout
   return Promise.race([p, new Promise<T>((_, rej) => { t = setTimeout(() => rej(new Error(`timeout:${label}`)), ms) })])
@@ -52,7 +60,7 @@ const deepFreeze = <T>(v: T): T => {
  * evidence bytes or copies a result from one component to another.
  */
 export function normalizeCheckOutput(comp: LoadedComponent, out: unknown):
-  { evidence?: Uint8Array; statuses: Map<string, { status: RecordedStatus; reason?: string }>; violations: string[] } {
+  { evidence?: Uint8Array; validUntilMs?: number; statuses: Map<string, { status: RecordedStatus; reason?: string }>; violations: string[] } {
   const declared = comp.manifest.claims.map(c => c.id)
   const statuses = new Map<string, { status: RecordedStatus; reason?: string }>()
   const violations: string[] = []
@@ -61,6 +69,14 @@ export function normalizeCheckOutput(comp: LoadedComponent, out: unknown):
     for (const c of declared) statuses.set(c, { status: 'unavailable', reason: 'adapter_protocol_violation:shape' })
     return { statuses, violations: ['shape'] }
   }
+  let validUntilMs: number | undefined
+  if (o.valid_until !== undefined) {
+    validUntilMs = parseExactInstant(o.valid_until)
+    if (validUntilMs === undefined) {
+      for (const c of declared) statuses.set(c, { status: 'unavailable', reason: 'adapter_protocol_violation:valid_until' })
+      return { statuses, violations: ['valid_until'] }
+    }
+  }
   for (const r of o.claims) {
     if (!r || typeof r.claim !== 'string' || !declared.includes(r.claim)) { violations.push(`undeclared_claim:${String(r?.claim)}`); continue }
     if (!CLAIM_STATUSES.includes(r.status)) { violations.push(`invalid_status:${r.claim}`); statuses.set(r.claim, { status: 'unavailable', reason: 'adapter_protocol_violation:status' }); continue }
@@ -68,7 +84,7 @@ export function normalizeCheckOutput(comp: LoadedComponent, out: unknown):
     statuses.set(r.claim, { status: r.status, ...(typeof r.reason === 'string' ? { reason: r.reason } : {}) })
   }
   for (const c of declared) if (!statuses.has(c)) statuses.set(c, { status: 'unavailable', reason: 'claim_not_reported' })
-  return { evidence: o.evidence, statuses, violations }
+  return { evidence: o.evidence, ...(validUntilMs !== undefined ? { validUntilMs } : {}), statuses, violations }
 }
 
 export class Runtime {
@@ -80,8 +96,8 @@ export class Runtime {
 
   private constructor(policy: CustomerPolicy, dbPath: string, clock?: () => Date) {
     this.policy = policy
-    this.store = new Store(dbPath)
     this.clock = clock ?? (() => new Date())
+    this.store = new Store(dbPath, this.clock)
   }
 
   /** Loads every pinned component. Any load refusal aborts startup. */
@@ -178,18 +194,26 @@ export class Runtime {
       if (by !== undefined) return refuse(['approval_already_consumed'])
     }
 
-    const { claims, evidence } = await this.evaluate(wf, checkerIds, { opId, workflow: req.workflow, approvalId, action, evidence: req.evidence ?? {} })
+    const { claims, evidence, deadlines } = await this.evaluate(wf, checkerIds, { opId, workflow: req.workflow, approvalId, action, evidence: req.evidence ?? {} })
     const reasons = claims.filter(c => c.requirement === 'required' && c.status !== 'established')
       .map(c => `required_claim_${c.status}:${c.component}#${c.claim}${c.reason ? ':' + c.reason : ''}`)
     if (reasons.length) return refuse(reasons, claims, evidence, checkerIds)
+    // The earliest deadline reported by a component that supplies a required claim binds admission.
+    // Optional components cannot shorten it: their results never block.
+    const requiredIds = new Set(wf.required_claims.map(r => r.component))
+    const bound = [...deadlines].filter(([id]) => requiredIds.has(id)).map(([, ms]) => ms)
+    const deadlineMs = bound.length ? Math.min(...bound) : null
+    if (wf.approval === 'required' && deadlineMs === null) return refuse(['admission_deadline_missing'], claims, evidence, checkerIds)
 
-    const admitted = this.store.admit({ operation_id: opId, workflow: req.workflow, approval_id: approvalId, action_digest: actionDigest },
-      { at, decision: 'admitted', reasons: [], components, claims }, evidence, this.describeComponents(checkerIds))
+    // One transaction re-reads the clock after taking the write lock, checks the deadline, consumes
+    // the approval, creates the operation and claims its first dispatch. No await runs inside it.
+    const admitted = this.store.admit({ operation_id: opId, workflow: req.workflow, approval_id: approvalId, action_digest: actionDigest, valid_until_ms: deadlineMs },
+      { at, decision: 'admitted', reasons: [], components, claims }, evidence, this.describeComponents(checkerIds), exec.id, wf.execute_timeout_ms + 1000)
     if (!admitted.ok) {
-      if (admitted.conflict === 'approval_already_consumed') return { status: 'refused', operation_id: opId, reasons: ['approval_already_consumed'], claims }
-      return this.retry(this.store.getOperation(opId)!, actionDigest, approvalId, wf, action)
+      if (admitted.conflict === 'operation_exists') return this.retry(this.store.getOperation(opId)!, actionDigest, approvalId, wf, action)
+      return { status: 'refused', operation_id: opId, reasons: [admitted.conflict], claims }
     }
-    return this.dispatch(opId, wf, action)
+    return this.execute(opId, wf, action, admitted.attempt)
   }
 
   private retry(row: OperationRow, actionDigest: string, approvalId: string | null, wf: WorkflowPolicy, action: Action): Promise<SubmitResult> | SubmitResult {
@@ -202,9 +226,10 @@ export class Runtime {
   }
 
   private async evaluate(wf: WorkflowPolicy, ids: string[], s: { opId: string; workflow: string; approvalId: string | null; action: Action; evidence: Record<string, Uint8Array> }):
-    Promise<{ claims: ClaimRecord[]; evidence: Map<string, Uint8Array> }> {
+    Promise<{ claims: ClaimRecord[]; evidence: Map<string, Uint8Array>; deadlines: Map<string, number> }> {
     const now = this.clock().toISOString()
     const evidence = new Map<string, Uint8Array>()
+    const deadlines = new Map<string, number>()
     const perComponent = new Map<string, Map<string, { status: RecordedStatus; reason?: string }>>()
     await Promise.all(ids.map(async id => {
       const c = this.components.get(id)!
@@ -217,6 +242,7 @@ export class Runtime {
         const out = await withTimeout(c.adapter.check!(input), wf.check_timeout_ms, id)
         const n = normalizeCheckOutput(c, out)
         if (n.evidence) evidence.set(id, new Uint8Array(n.evidence))
+        if (n.validUntilMs !== undefined) deadlines.set(id, n.validUntilMs)
         perComponent.set(id, n.statuses)
       } catch (e) {
         const reason = `component_unavailable:${(e as Error).message.slice(0, 120)}`
@@ -233,24 +259,30 @@ export class Runtime {
           : { ...ref, requirement: 'optional' as const, ...r }
       }),
     ]
-    return { claims, evidence }
+    return { claims, evidence, deadlines }
   }
 
-  private async dispatch(opId: string, wf: WorkflowPolicy, action: Action): Promise<SubmitResult> {
+  private dispatch(opId: string, wf: WorkflowPolicy, action: Action): Promise<SubmitResult> | SubmitResult {
     const exec = this.components.get(wf.executor)!
-    const execInfo = { id: exec.id, version: exec.manifest.artifact.version, role: exec.manifest.role }
-    const claim = this.store.claimDispatch(opId, exec.id, Date.now(), wf.execute_timeout_ms + 1000)
+    const claim = this.store.claimDispatch(opId, exec.id, wf.execute_timeout_ms + 1000)
     if (claim.kind === 'confirmed') return { status: 'provider_confirmed', operation_id: opId, provider_ref: claim.row.provider_ref, replayed: true }
     if (claim.kind === 'in_flight') return { status: 'in_flight', operation_id: opId, attempt: claim.row.attempts }
     if (claim.kind === 'terminal_failed') return { status: 'failed', operation_id: opId, replayed: true }
+    if (claim.kind === 'expired') return { status: 'failed', operation_id: opId, reason: 'approval_expired_before_retry' }
+    return this.execute(opId, wf, action, claim.attempt)
+  }
 
+  /** Runs one claimed attempt. Called only right after the transaction that claimed it. */
+  private async execute(opId: string, wf: WorkflowPolicy, action: Action, attempt: number): Promise<SubmitResult> {
+    const exec = this.components.get(wf.executor)!
+    const execInfo = { id: exec.id, version: exec.manifest.artifact.version, role: exec.manifest.role }
     const row = this.store.getOperation(opId)!
     let out: ExecuteOutput
     try {
       // The executor receives the action exactly as admitted (digest-bound to the operation row).
       if (digestJson(action) !== row.action_digest) throw new Error('action_digest_mismatch_at_dispatch')
       out = await withTimeout(exec.adapter.execute!({
-        operation_id: opId, idempotency_key: opId, attempt: claim.attempt, action: deepFreeze(structuredClone(action)),
+        operation_id: opId, idempotency_key: opId, attempt, action: deepFreeze(structuredClone(action)),
       }), wf.execute_timeout_ms, exec.id)
       if (!out || !(out.evidence instanceof Uint8Array) || !['provider_confirmed', 'failed', 'unknown'].includes(out.outcome)) {
         out = { outcome: 'unknown', reason: 'adapter_protocol_violation', evidence: new Uint8Array() }
@@ -260,9 +292,9 @@ export class Runtime {
       out = { outcome: 'unknown', reason: (e as Error).message.slice(0, 120), evidence: new Uint8Array() }
     }
     const retriable = out.outcome === 'unknown' || (out.outcome === 'failed' && out.retriable === true)
-    const final = this.store.finishAttempt(opId, claim.attempt,
+    const final = this.store.finishAttempt(opId, attempt,
       { outcome: out.outcome, retriable, provider_ref: out.provider_ref, reason: out.reason, evidence: out.evidence }, execInfo)
-    return { status: final.state, operation_id: opId, attempt: claim.attempt, provider_ref: final.provider_ref, ...(out.reason ? { reason: out.reason } : {}) }
+    return { status: final.state, operation_id: opId, attempt, provider_ref: final.provider_ref, ...(out.reason ? { reason: out.reason } : {}) }
   }
 
   /** Provenance for one logical operation. Digests and identifiers only, no payloads or secrets. */

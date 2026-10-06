@@ -18,6 +18,8 @@ export function createAdapter(ctx: AdapterContext): Adapter {
         case 'undeclared': return { evidence: bytes, claims: [{ claim: 'fixture.ok', status: 'established' }, { claim: 'something.else', status: 'established' }] }
         case 'bad_status': return { evidence: bytes, claims: [{ claim: 'fixture.ok', status: 'ok' as never }] }
         case 'not_bytes': return { evidence: 'fixture-evidence' as never, claims: [{ claim: 'fixture.ok', status: 'established' }] }
+        // Second-precision instant: outside the exact UTC millisecond form the contract requires.
+        case 'deadline_malformed': return { evidence: bytes, claims: [{ claim: 'fixture.ok', status: 'established' }], valid_until: '2099-01-01T00:00:00Z' } as CheckOutput
         default: return { evidence: bytes, claims: [{ claim: 'fixture.ok', status: 'established' }, { claim: 'approval.signature_valid', status: 'established' }] }
       }
     },
