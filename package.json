@@ -3,9 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Exploratory common-port prototype V0. Local only, not a public proposal or adopted contract.",
-  "license": "UNLICENSED",
-  "engines": { "node": ">=24" },
+  "description": "Candidate common port for independent agent-governance projects: one adapter contract, a runtime that admits or refuses an action before its side effect, and a durable record of what each component checked. V0 prototype.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 'test/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json",

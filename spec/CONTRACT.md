@@ -1,10 +1,10 @@
 # federation-port/v0 contract
 
-Exploratory prototype, local only. Not a public proposal and not an adopted contract. No third-party
-project is a participant. Revision V0b (2026-10-05) adds the admission deadline (section 5, rule 5), the
+Candidate contract, published for discussion on aeoess/agent-governance-vocabulary#177. Not an adopted
+federation contract. No third-party project is a participant until it says so. Revision V0b (2026-10-05) adds the admission deadline (section 5, rule 5), the
 execution-context binding of retries (section 7) and the trust statement in section 10. The `contract` string
-stays `federation-port/v0`; both additions are optional fields. TypeScript types: `src/contract/types.ts`. Governed by the 2026-10-05 common-port design note
-(internal, not in this repo).
+stays `federation-port/v0`; both additions are optional fields. Revision 2026-10-07 binds retries to the
+submitted evidence (section 7). TypeScript types: `src/contract/types.ts`.
 
 ## 1. Parties
 
@@ -115,8 +115,8 @@ and the first dispatch claim commit together. A transport error after the reques
 `unknown`, never `failed`. Dispatch is claimed under a lease, so concurrent retries do not double-dispatch; a
 lease left by a crashed worker expires. A confirmed operation replays its result without dispatch.
 
-At admission the operation row stores its workflow name, tenant (or none), approval id, action digest,
-admission deadline, and an execution context: policy id, digest of the workflow definition, and for each
+At admission the operation row stores its workflow name, tenant (or none), approval id, action digest, a
+digest of the evidence submitted with the request, admission deadline, and an execution context: policy id, digest of the workflow definition, and for each
 component the workflow uses its pinned version, manifest digest, artifact digest and a digest of its
 configuration. Secrets are not part of it. Resubmitting the same operation id is a retry: no re-admission,
 no re-consumption, the same idempotency key, and only under that stored binding. Otherwise it is refused,
@@ -127,6 +127,7 @@ checked in this order:
 | `operation_workflow_mismatch` | the retry names another workflow, even one with an identical definition |
 | `operation_tenant_mismatch` | tenant differs, including present versus absent |
 | `operation_id_reused_for_different_action` | action (payment, amount, currency, tool) or approval id differs |
+| `operation_evidence_changed` | the evidence submitted with the retry differs from the evidence submitted at admission |
 | `operation_context_changed:policy_id` | the running policy has another `policy_id` |
 | `operation_context_changed:workflow_definition` | the workflow's definition changed (claims, executor, timeouts, approval rule) |
 | `operation_context_changed:component_pin:<id>` | a component's pinned version or digests changed, or one was added or removed |

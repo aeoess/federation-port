@@ -1,11 +1,66 @@
-# federation-port (V0b, private prototype)
+# federation-port
 
-Exploratory local prototype of a common port: a small adapter contract, a runtime that admits or refuses an
-action before its side effect, and a local refund simulator. Not a public proposal, not an adopted contract.
-No third-party project is integrated or treated as a participant.
+A candidate common port for independent agent-governance projects. One small adapter contract, a runtime
+that admits or refuses an action before its side effect, and a durable record of what each component
+checked. Each project writes and owns its own adapter. The runtime core does not depend on any one
+project's protocol.
 
-- Contract: `spec/CONTRACT.md`, `src/contract/types.ts`
-- Runtime: `src/runtime`
-- Simulator: `sim/` (refund provider, exact EUR 40.00 pay_A profile, execution component)
-- Components: `adapters/`
-- Tests: `npm test` (Node 24, node:test, node:sqlite)
+Status: V0 prototype by one author (Tymofii Pidlisnyi). Published for discussion on
+[aeoess/agent-governance-vocabulary#177](https://github.com/aeoess/agent-governance-vocabulary/issues/177).
+It is not an adopted federation contract, and no project is a participant until it says so.
+
+## What it does
+
+- **Contract** ([`spec/CONTRACT.md`](spec/CONTRACT.md), `src/contract/types.ts`). A component is a manifest
+  plus an adapter module. A checker component states which claims it can establish. An execution component
+  performs the side effect. Manifests and artifacts are pinned by digest.
+- **Runtime** (`src/runtime`). For each workflow it evaluates required and optional claims, refuses before
+  dispatch when a required claim is not established, checks the admission deadline inside the write,
+  consumes an approval once across processes and restarts, and binds every retry to the admitted workflow,
+  tenant, action, approval, submitted evidence and execution context. State lives in one SQLite file.
+- **Record.** Per logical operation it keeps every admission decision (components with version and digests,
+  per-claim status, evidence digests), every attempt and its outcome, and one usage row per component. No
+  action arguments, evidence bytes or secrets. No settlement, pricing or revenue logic.
+
+## What is in this repo
+
+| path | what |
+|---|---|
+| `adapters/aps-authority` | checks an Agent Passport System approval against the exact action (uses `agent-passport-system`) |
+| `adapters/tool-admission` | checks that the served tool definition still matches its pin |
+| `adapters/refund-execution-0.1-*` | admission and execution components for a bounded refund profile |
+| `sim/` | local refund provider and simulator (no real payment) |
+| `compare/` | the same refund flow written directly and through the port, with results in `compare/RESULTS.md` |
+| `test/` | `npm test` (Node 24, node:test, node:sqlite) |
+
+The APS adapter is one adapter among others. Nothing under `src/` imports it.
+
+## Try it
+
+```console
+$ npm ci
+$ npm test          # 44 tests
+$ npm run compare   # regenerates compare/RESULTS.md against the local simulator
+```
+
+## Limits
+
+- **Adapters run in the runtime's own process.** Manifest privileges are checked declarations, not a
+  sandbox. Running third-party adapter code in V0 gives it the runtime's authority. Out-of-process
+  isolation is the first V1 item (spec section 10).
+- **One author, no outside adapter yet.** Independent interoperability is not shown until another project
+  writes an adapter against the contract without changes to `src/`.
+- **Simulated provider only.** The comparison numbers come from a local simulator on one machine.
+- Also from the spec: no revocation, trusted time source, remote components, catalog, multi-tenant
+  isolation or key rotation, and the tenant label is not authenticated.
+
+## Taking part
+
+Write an adapter for your project against `spec/CONTRACT.md`, in your own repository or as a PR here. You
+keep ownership of it. The most useful first contribution is an adapter for a check your project already
+performs, run through the existing tests or a test of your own. Contract changes are discussed on #177 or
+in an issue here before code.
+
+## Licence
+
+Apache-2.0, see `LICENSE`.
