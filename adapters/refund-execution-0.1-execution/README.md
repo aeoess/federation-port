@@ -43,5 +43,3 @@ pre-dispatch failure, a response lost after a committed effect, and an unresolve
 - Not an implementation of any other project, and not interoperability with one.
 - All keys are synthetic and generated per test run.
 - Field names follow a draft public contract text that may change.
-- Known core gap, recorded in test `RE-gap` and not fixed: a retry of a `provider_confirmed` operation does
-  not compare changed `SubmitRequest.evidence`, and the confirmed result replays.

@@ -1,13 +1,15 @@
 # federation-port
 
-A candidate common port for independent agent-governance projects. One small adapter contract, a runtime
-that admits or refuses an action before its side effect, and a durable record of what each component
-checked. Each project writes and owns its own adapter. The runtime core does not depend on any one
+Written by Tymofii Pidlisnyi as an experiment. This is not a federation standard or an adopted federation
+component, and no project is a participant until it says so.
+
+One possible integration boundary for independent agent-governance projects. It has one small adapter
+contract, a runtime that admits or refuses an action before calling its executor, and a durable record of
+what each component checked. Each project writes and owns its own adapter. The runtime core does not depend on any one
 project's protocol.
 
-Status: V0 prototype by one author (Tymofii Pidlisnyi). Published for discussion on
+Status: V0 prototype, published for discussion on
 [aeoess/agent-governance-vocabulary#177](https://github.com/aeoess/agent-governance-vocabulary/issues/177).
-It is not an adopted federation contract, and no project is a participant until it says so.
 
 ## What it does
 
@@ -16,11 +18,13 @@ It is not an adopted federation contract, and no project is a participant until 
   performs the side effect. Manifests and artifacts are pinned by digest.
 - **Runtime** (`src/runtime`). For each workflow it evaluates required and optional claims, refuses before
   dispatch when a required claim is not established, checks the admission deadline inside the write,
-  consumes an approval once across processes and restarts, and binds every retry to the admitted workflow,
+  consumes an approval once across processes and restarts sharing the same store, and binds every retry to the admitted workflow,
   tenant, action, approval, submitted evidence and execution context. State lives in one SQLite file.
 - **Record.** Per logical operation it keeps every admission decision (components with version and digests,
   per-claim status, evidence digests), every attempt and its outcome, and one usage row per component. No
-  action arguments, evidence bytes or secrets. No settlement, pricing or revenue logic.
+  action arguments or evidence bytes in the provenance output. Native evidence bytes are stored in SQLite.
+  Adapter reasons are also recorded, so adapters must keep sensitive data out of their reasons and errors.
+  No settlement, pricing or revenue logic.
 
 ## What is in this repo
 

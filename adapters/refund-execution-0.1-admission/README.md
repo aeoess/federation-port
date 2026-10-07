@@ -4,10 +4,12 @@ Part of the refund-execution/0.1 envelope profile. The executor is in `../refund
 
 ## What the profile shows
 
-The unchanged core (no change under `src/` or `spec/`) can carry a refund-execution/0.1 handoff when
+The profile was added at `9a33269` without changes under `src/` or `spec/`. It carries a refund-execution/0.1 handoff when
 `action.args` holds the whole handoff. The runtime's action digest then binds the nested arguments and every
 handoff reference (`approval_ref`, `pic_evidence_ref`, `aps_evidence_ref`) to the operation id. A retry that
 changes any of them is refused with `operation_id_reused_for_different_action`.
+
+The later runtime fix at `bb8b821` also binds retries to the submitted evidence.
 
 This component checks, for each admission:
 
