@@ -1,6 +1,6 @@
 import { CLAIM_STATUSES } from '../contract/types.ts'
 import type { Action, CheckOutput, ClaimStatus, ExecuteOutput } from '../contract/types.ts'
-import { canonicalJson, digestJson } from './canonical.ts'
+import { canonicalJson, digestJson, sha256 } from './canonical.ts'
 import { loadComponent, LoadError } from './loader.ts'
 import type { LoadedComponent } from './loader.ts'
 import type { ClaimRef, CustomerPolicy, WorkflowPolicy } from './policy.ts'
@@ -200,10 +200,20 @@ export class Runtime {
       action = structuredClone({ tool: req.action.tool, args: req.action.args })
       actionDigest = digestJson(action)
     } catch { return refuseEarly(['action_not_canonicalizable']) }
+    // The evidence submitted with a request is part of what was admitted. A retry with different
+    // evidence is refused, as a retry with a different action or approval is.
+    let evidenceDigest: string
+    try {
+      const ev = req.evidence ?? {}
+      evidenceDigest = digestJson(Object.fromEntries(Object.keys(ev).sort().map(k => {
+        if (!(ev[k] instanceof Uint8Array)) throw new Error('evidence_not_bytes')
+        return [k, sha256(ev[k])]
+      })))
+    } catch { return refuseEarly(['evidence_not_bytes']) }
     const approvalId = req.approval_id ?? null
 
     // Retry path: same logical operation. Admission and consumption already happened once.
-    const asked = { workflow: req.workflow, tenant, actionDigest, approvalId }
+    const asked = { workflow: req.workflow, tenant, actionDigest, approvalId, evidenceDigest }
     const existing = this.store.getOperation(opId)
     if (existing) return this.retry(existing, asked, action)
 
@@ -241,7 +251,7 @@ export class Runtime {
 
     // One transaction re-reads the clock after taking the write lock, checks the deadline, consumes
     // the approval, creates the operation and claims its first dispatch. No await runs inside it.
-    const admitted = this.store.admit({ operation_id: opId, workflow: req.workflow, tenant, approval_id: approvalId, action_digest: actionDigest,
+    const admitted = this.store.admit({ operation_id: opId, workflow: req.workflow, tenant, approval_id: approvalId, action_digest: actionDigest, request_evidence_digest: evidenceDigest,
       valid_until_ms: deadlineMs, context: this.executionContext(req.workflow, wf) },
       { at, decision: 'admitted', reasons: [], components, claims }, evidence, this.describeComponents(checkerIds), exec.id, wf.execute_timeout_ms + 1000)
     if (!admitted.ok) {
@@ -251,12 +261,13 @@ export class Runtime {
     return this.execute(opId, wf, action, admitted.attempt)
   }
 
-  /** Retry of an admitted operation: only under the workflow, tenant, action, approval and execution context it was admitted with. */
-  private retry(row: OperationRow, asked: { workflow: string; tenant: string | null; actionDigest: string; approvalId: string | null }, action: Action): Promise<SubmitResult> | SubmitResult {
+  /** Retry of an admitted operation: only under the workflow, tenant, action, approval, submitted evidence and execution context it was admitted with. */
+  private retry(row: OperationRow, asked: { workflow: string; tenant: string | null; actionDigest: string; approvalId: string | null; evidenceDigest: string }, action: Action): Promise<SubmitResult> | SubmitResult {
     const refuse = (reasons: string[]): SubmitResult => ({ status: 'refused', operation_id: row.operation_id, reasons, claims: [] })
     if (asked.workflow !== row.workflow) return refuse(['operation_workflow_mismatch'])
     if (asked.tenant !== row.tenant) return refuse(['operation_tenant_mismatch'])
     if (row.action_digest !== asked.actionDigest || row.approval_id !== asked.approvalId) return refuse(['operation_id_reused_for_different_action'])
+    if (row.request_evidence_digest !== asked.evidenceDigest) return refuse(['operation_evidence_changed'])
     const wf = this.policy.workflows[row.workflow]
     const stored = JSON.parse(row.context) as ExecutionContext
     if (digestJson(stored) !== row.context_digest) return refuse(['operation_context_corrupt'])

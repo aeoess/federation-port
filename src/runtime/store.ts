@@ -22,6 +22,8 @@ export interface OperationRow {
   context_digest: string
   approval_id: string | null
   action_digest: string
+  /** Digest of the evidence submitted with the admitted request (component id to sha256 of its bytes). */
+  request_evidence_digest: string
   state: OperationState
   retriable: number
   attempts: number
@@ -56,7 +58,7 @@ export type DispatchClaim =
   | { kind: 'expired'; row: OperationRow }
 
 /** Bumped whenever a table changes shape. Older store files are refused, not migrated. */
-export const STORE_SCHEMA_VERSION = 3
+export const STORE_SCHEMA_VERSION = 4
 
 /**
  * Durable state in one SQLite file. All state transitions run inside BEGIN IMMEDIATE.
@@ -81,7 +83,7 @@ export class Store {
         approval_id TEXT PRIMARY KEY, operation_id TEXT NOT NULL, consumed_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS operations (
         operation_id TEXT PRIMARY KEY, workflow TEXT NOT NULL, tenant TEXT, policy_id TEXT NOT NULL,
-        context TEXT NOT NULL, context_digest TEXT NOT NULL, approval_id TEXT, action_digest TEXT NOT NULL,
+        context TEXT NOT NULL, context_digest TEXT NOT NULL, approval_id TEXT, action_digest TEXT NOT NULL, request_evidence_digest TEXT NOT NULL,
         state TEXT NOT NULL, retriable INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0,
         lease_until INTEGER NOT NULL DEFAULT 0, provider_ref TEXT, valid_until_ms INTEGER,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -164,7 +166,7 @@ export class Store {
    * consumes the approval, creates the operation and claims attempt 1 for `executor`. Every time
    * it records is that instant. Returns a conflict instead of throwing.
    */
-  admit(op: { operation_id: string; workflow: string; tenant: string | null; approval_id: string | null; action_digest: string;
+  admit(op: { operation_id: string; workflow: string; tenant: string | null; approval_id: string | null; action_digest: string; request_evidence_digest: string;
     valid_until_ms: number | null; context: ExecutionContext },
     rec: Omit<AdmissionRecord, 'evidence'>, evidence: Map<string, Uint8Array>,
     checkers: { id: string; version: string; role: string }[], executor: string, leaseMs: number):
@@ -183,9 +185,9 @@ export class Store {
         this.db.prepare('INSERT INTO approvals VALUES (?, ?, ?)').run(op.approval_id, op.operation_id, at)
       }
       this.db.prepare(`INSERT INTO operations (operation_id, workflow, tenant, policy_id, context, context_digest, approval_id, action_digest,
-        state, attempts, lease_until, valid_until_ms, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'dispatched', 1, ?, ?, ?, ?)`)
+        request_evidence_digest, state, attempts, lease_until, valid_until_ms, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'dispatched', 1, ?, ?, ?, ?)`)
         .run(op.operation_id, op.workflow, op.tenant, op.context.policy_id, canonicalJson(op.context), digestJson(op.context),
-          op.approval_id, op.action_digest, nowMs + leaseMs, op.valid_until_ms, at, at)
+          op.approval_id, op.action_digest, op.request_evidence_digest, nowMs + leaseMs, op.valid_until_ms, at, at)
       this.db.prepare('INSERT INTO attempts (operation_id, attempt, component, started_at) VALUES (?, 1, ?, ?)').run(op.operation_id, executor, at)
       this.appendAdmission(op.operation_id, { ...rec, at }, evidence, checkers)
       return { ok: true as const, attempt: 1 as const, at }

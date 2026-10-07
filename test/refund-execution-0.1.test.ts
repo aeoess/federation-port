@@ -299,16 +299,17 @@ test('RE-j OPEN POLICY QUESTION (from the contract, not a decision): second dist
   assert.deepEqual(a, b)
 })
 
-test('RE-gap core: a retry of a provider_confirmed operation does not compare changed SubmitRequest.evidence; the confirmed result replays', {
-  todo: 'Core gap recorded from the review, not fixed here: Runtime.retry compares workflow, tenant, action digest, approval id and context, never req.evidence. Fixing it needs a src change.',
-}, async () => {
+test('a retry of a provider_confirmed operation with changed SubmitRequest.evidence is refused, not replayed', async () => {
   const env = await setupProfile()
   try {
     const { req } = submission(env)
     assert.equal((await env.rt.submit(req)).status, 'provider_confirmed')
     const replaced = { ...req, evidence: { [ADMISSION]: new TextEncoder().encode('{"not":"the admitted approval evidence"}') } }
     const r = await env.rt.submit(replaced)
-    // Desired: refused or at least flagged. Today: provider_confirmed with replayed true.
-    assert.equal(r.status, 'refused', `reproduced gap: ${JSON.stringify(r)}`)
+    assert.equal(r.status, 'refused', JSON.stringify(r))
+    assert.deepEqual((r as { reasons: string[] }).reasons, ['operation_evidence_changed'])
+    // The same evidence still replays the confirmed result.
+    const again = await env.rt.submit(req)
+    assert.equal(again.status, 'provider_confirmed')
   } finally { await env.close() }
 })
