@@ -90,7 +90,7 @@ test('D1d deadline rule: malformed valid_until makes the component unavailable; 
   } finally { await env.close() }
 })
 
-test('D1e after the deadline: a retriable failure is not re-dispatched; an unknown outcome is resolved with the same key', async () => {
+test('D1e after the deadline nothing is dispatched: a retriable failure is closed; an unknown outcome stays unknown for reconciliation', async () => {
   const env = await setup()
   try {
     const T0 = new Date(Date.now() - 1000)
@@ -113,9 +113,14 @@ test('D1e after the deadline: a retriable failure is not re-dispatched; an unkno
     const reqB = { ...req, operation_id: opId(), approval_id: b.approval_id, action: { tool: 'refund', args: { ...APPROVED_REFUND, payment_id: 'pay_B' } }, evidence: { [APS]: b.evidence } }
     env.provider.setFault({ mode: 'drop_after_commit', count: 1 })
     assert.equal((await env.rt.submit(reqB)).status, 'unknown')
+    const beforeB = env.provider.requests
     now = new Date(Date.parse(b.valid_until) + 1)
-    const resolved = await env.rt.submit(reqB)
-    assert.equal(resolved.status, 'provider_confirmed')
+    // The refund exists, but after the authorization expired the runtime may not send anything to find
+    // out: the operation stays unknown and needs a read-only reconciliation (section 7).
+    const pending = await env.rt.submit(reqB)
+    assert.equal(pending.status, 'unknown')
+    assert.equal((pending as any).reason, 'reconciliation_required')
+    assert.equal(env.provider.requests, beforeB)
     assert.equal(env.provider.refunds.length, 1)
   } finally { await env.close() }
 })

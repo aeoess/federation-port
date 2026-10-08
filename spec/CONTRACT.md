@@ -87,10 +87,8 @@ and `ctx.fetch` (refuses origins outside the declared and granted destinations).
    milliseconds, an offset, `2026-02-30…`, a non-string) makes every claim of the component `unavailable`
    (`adapter_protocol_violation:valid_until`). Boundary: inclusive, admissible while `now <= valid_until` at
    millisecond precision, the same rule the APS authority component applies to its own `approval.unexpired`.
-   The deadline bounds admission and the re-dispatch of a retriable failure (section 7). It does not bound
-   the retry of an `unknown` outcome, which may be the first request the provider receives if the earlier
-   attempt failed before sending. An executor that knows its request was not sent reports `failed` with
-   `retriable: true`, so that case is closed at the deadline instead.
+   The deadline is an authorization expiry: no request is dispatched after it, first attempt or retry
+   (section 7). An operation still `unknown` at the deadline stays `unknown` until it is reconciled.
 
 ## 6. Admission
 
@@ -144,10 +142,13 @@ checked in this order:
 A refused retry does not change the stored operation, so the original request still recovers. Changing the
 policy therefore never reroutes a stored operation to another provider or check set.
 
-Retries after the admission deadline: an `unknown` outcome (or an expired lease) is retried with the same
-idempotency key, because the side effect may already have happened and the retry resolves it. A `failed`
-outcome marked retriable (the provider reported no side effect) is closed instead, result `failed` with
-reason `approval_expired_before_retry`, because dispatching it would be a first side effect after expiry.
+After the admission deadline nothing is dispatched, because a new request could be the first side effect
+after the authorization expired. A retriable `failed` operation (every attempt reported no side effect) is
+closed, result `failed` with reason `approval_expired_before_retry`. An `unknown` operation, or one whose
+lease expired with its worker, stays `unknown` and the submit returns reason `reconciliation_required`: the
+effect may or may not exist, and only a read-only lookup at the provider can tell. V0 has no such lookup
+(section 10). Before the deadline an `unknown` operation is retried with the same idempotency key, so a
+provider must keep idempotency keys at least until the admission deadline plus the execute timeout.
 
 ## 8. Loading
 
@@ -159,8 +160,8 @@ secret not provisioned, entry missing `createAdapter`, role method missing, `des
 
 Per logical operation: policy id, workflow, tenant, execution context and its digest, action digest, approval id, state, every admission decision (components with
 version and digests, per-claim status and requirement, evidence digests), every attempt with outcome. No action
-arguments, evidence bytes or secrets. Claim reasons and executor reasons are stored and returned cut to 120
-characters. They are codes: an adapter must not put arguments, evidence or secrets in them, and the length bound
+arguments, evidence bytes or secrets. Claim reasons and executor reasons are stored and returned cut to at most 120
+UTF-16 code units, on a grapheme boundary. They are codes: an adapter must not put arguments, evidence or secrets in them, and the length bound
 does not stop a short secret, so that obligation stays with the adapter. Usage: one row per component per logical operation, `calls` counting
 invocations including retries, `outcome` the last state. No settlement, pricing or revenue logic.
 
@@ -188,4 +189,5 @@ Other limits:
 - Deadlines rely on the local clock of each process sharing the store. Clock skew between workers is not handled.
 - The tenant is a caller-supplied label that binds an operation id. The runtime does not authenticate it.
 - The tool-admission check runs at admission, not at each retry.
-- There is no reconciliation endpoint. An `unknown` operation is resolved only when the caller retries.
+- There is no reconciliation endpoint. An `unknown` operation is resolved only by a retry before the deadline;
+  after it, it stays `unknown` with `reconciliation_required`.

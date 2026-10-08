@@ -124,11 +124,12 @@ test('E5 an executor reason is stored and returned cut to 120 characters', async
   } finally { await env.close() }
 })
 
-test('E6 lost response, outage, recovery: the same key reaches the provider, exactly one refund, provider_confirmed', async () => {
+test('E6 lost response, outage, recovery before the deadline: the same key reaches the provider, exactly one refund, provider_confirmed', async () => {
   const env = await setup()
   try {
     const T0 = new Date(Date.now() - 1000)
-    await restart(env, env.policy, () => new Date(T0.getTime() + 500))
+    let now = new Date(T0.getTime() + 500)
+    await restart(env, env.policy, () => now)
     const a = env.operator.issue(APPROVED_REFUND, { issuedAt: T0, ttlMs: 60_000 })
     const req = { workflow: 'refund', operation_id: opId(), approval_id: a.approval_id, action: { tool: 'refund', args: { ...APPROVED_REFUND } }, evidence: { [APS]: a.evidence } }
     env.provider.setFault({ mode: 'drop_after_commit', count: 1 })
@@ -136,8 +137,8 @@ test('E6 lost response, outage, recovery: the same key reaches the provider, exa
     // The outage: attempt 2 cannot reach the provider. The provider keeps its state.
     scriptExecutor(env, { 2: { outcome: 'failed', retriable: true, reason: 'provider_unreachable', evidence: new Uint8Array() } })
     assert.equal((await env.rt.submit(req)).status, 'unknown')
-    // Recovery, after the deadline: an unknown operation is retried with the same key.
-    await restart(env, env.policy, () => new Date(Date.parse(a.valid_until) + 1))
+    // Recovery before the deadline: the unknown operation is retried with the same key.
+    now = new Date(Date.parse(a.valid_until) - 1)
     const done = await env.rt.submit(req)
     assert.equal(done.status, 'provider_confirmed', JSON.stringify(done))
     assert.equal(env.provider.refunds.length, 1)
@@ -146,3 +147,64 @@ test('E6 lost response, outage, recovery: the same key reaches the provider, exa
   } finally { await env.close() }
 })
 
+test('E7 no first refund after the authorization expired: an attempt that never reached the provider is not retried past the deadline', async () => {
+  const env = await setup()
+  try {
+    const T0 = new Date(Date.now() - 1000)
+    let now = new Date(T0.getTime() + 500)
+    await restart(env, env.policy, () => now)
+    const a = env.operator.issue(APPROVED_REFUND, { issuedAt: T0, ttlMs: 60_000 })
+    const req = { workflow: 'refund', operation_id: opId(), approval_id: a.approval_id, action: { tool: 'refund', args: { ...APPROVED_REFUND } }, evidence: { [APS]: a.evidence } }
+    // A local failure before any byte is written: the runtime cannot tell it from a lost response.
+    const c = env.rt.component(EXEC)!
+    const original = c.adapter.execute!.bind(c.adapter)
+    c.adapter.execute = async (op: ExecuteOp) => { if (op.attempt === 1) throw new Error('socket closed before the request was written'); return original(op) }
+    assert.equal((await env.rt.submit(req)).status, 'unknown')
+    assert.equal(env.provider.requests, 0)
+    now = new Date(Date.parse(a.valid_until) + 3_600_000)
+    const late = await env.rt.submit(req)
+    assert.equal(late.status, 'unknown')
+    assert.equal((late as { reason?: string }).reason, 'reconciliation_required')
+    assert.equal(env.provider.requests, 0)
+    assert.equal(env.provider.refunds.length, 0)
+    assert.equal(env.rt.store.attempts(req.operation_id).length, 1)
+  } finally { await env.close() }
+})
+
+test('E8 a lease left by a dead worker is not re-dispatched past the deadline; the operation becomes unknown', async () => {
+  const env = await setup()
+  try {
+    const T0 = new Date(Date.now() - 1000)
+    const nowA = new Date(T0.getTime() + 500)
+    await restart(env, env.policy, () => nowA)
+    const a = env.operator.issue(APPROVED_REFUND, { issuedAt: T0, ttlMs: 60_000 })
+    const req = { workflow: 'refund', operation_id: opId(), approval_id: a.approval_id, action: { tool: 'refund', args: { ...APPROVED_REFUND } }, evidence: { [APS]: a.evidence } }
+    let entered!: () => void
+    const inside = new Promise<void>(ok => { entered = ok })
+    env.rt.component(EXEC)!.adapter.execute = () => { entered(); return new Promise<ExecuteOutput>(() => {}) }
+    const pending = env.rt.submit(req)
+    await inside
+    const later = await Runtime.create({ policy: env.policy, dbPath: env.dbPath, secrets: { provider_api_key: env.apiKey }, clock: () => new Date(Date.parse(a.valid_until) + 1) })
+    const r = await later.submit(req)
+    assert.equal(r.status, 'unknown')
+    assert.equal((r as { reason?: string }).reason, 'reconciliation_required')
+    assert.equal(later.store.getOperation(req.operation_id)!.state, 'unknown')
+    assert.equal(later.store.attempts(req.operation_id).length, 1)
+    assert.equal(env.provider.requests, 0)
+    later.close()
+    await pending
+  } finally { await env.close() }
+})
+
+test('E9 reasons are cut on a grapheme boundary, never through a surrogate pair or a combining mark', async () => {
+  const { boundReason, REASON_MAX } = await import('../src/runtime/runtime.ts')
+  const emoji = boundReason('a'.repeat(REASON_MAX - 1) + '\u{1F600}tail')
+  assert.equal(emoji, 'a'.repeat(REASON_MAX - 1))
+  assert.ok(!/[\uD800-\uDFFF]$/.test(emoji))
+  const accent = boundReason('a'.repeat(REASON_MAX - 1) + 'é' + 'x')
+  assert.equal(accent, 'a'.repeat(REASON_MAX - 1))
+  // One grapheme longer than the bound (a base with many combining marks) is dropped, not cut.
+  assert.equal(boundReason('e' + '́'.repeat(500)), '')
+  assert.equal(boundReason('short'), 'short')
+  assert.ok(boundReason('\u{1F600}'.repeat(200)).length <= REASON_MAX)
+})

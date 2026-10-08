@@ -56,6 +56,7 @@ export type DispatchClaim =
   | { kind: 'in_flight'; row: OperationRow }
   | { kind: 'terminal_failed'; row: OperationRow }
   | { kind: 'expired'; row: OperationRow }
+  | { kind: 'reconciliation_required'; row: OperationRow }
 
 /** Bumped whenever a table changes shape. Older store files are refused, not migrated. */
 export const STORE_SCHEMA_VERSION = 4
@@ -209,11 +210,21 @@ export class Store {
       if (row.state === 'failed' && !row.retriable) return { kind: 'terminal_failed', row }
       if (row.state === 'dispatched' && row.lease_until > nowMs) return { kind: 'in_flight', row }
       const at = new Date(nowMs).toISOString()
-      if (row.state === 'failed' && row.valid_until_ms !== null && nowMs > row.valid_until_ms) {
-        this.db.prepare('UPDATE operations SET retriable = 0, updated_at = ? WHERE operation_id = ?').run(at, opId)
-        return { kind: 'expired', row: { ...row, retriable: 0 } }
+      if (row.valid_until_ms !== null && nowMs > row.valid_until_ms) {
+        // Past the admission deadline nothing is dispatched: any new request could be the first side
+        // effect after the authorization expired. A retriable failure (every attempt so far reported no
+        // side effect) is closed. An unknown operation, or one whose worker died with its lease, may or
+        // may not have an effect: it stays unknown until it is reconciled read-only, which V0 does not do.
+        if (row.state === 'failed') {
+          this.db.prepare('UPDATE operations SET retriable = 0, updated_at = ? WHERE operation_id = ?').run(at, opId)
+          return { kind: 'expired', row: { ...row, retriable: 0 } }
+        }
+        if (row.state === 'dispatched') {
+          this.db.prepare(`UPDATE operations SET state = 'unknown', retriable = 1, lease_until = 0, updated_at = ? WHERE operation_id = ?`).run(at, opId)
+        }
+        return { kind: 'reconciliation_required', row: { ...row, state: 'unknown' } }
       }
-      // unknown, retriable failed before the deadline, or dispatched with an expired lease (crashed worker).
+      // unknown, retriable failed, or dispatched with an expired lease (crashed worker), before the deadline.
       const attempt = row.attempts + 1
       this.db.prepare(`UPDATE operations SET state = 'dispatched', attempts = ?, lease_until = ?, updated_at = ? WHERE operation_id = ?`)
         .run(attempt, nowMs + leaseMs, at, opId)
