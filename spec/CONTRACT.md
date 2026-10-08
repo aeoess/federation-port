@@ -70,7 +70,7 @@ the attempt number and the admitted action. `ExecuteOutput.outcome` is `provider
 `retriable` true only when the provider did not perform the side effect) or `unknown`.
 
 `createAdapter(ctx)` receives `ctx.config` (from policy), `ctx.secrets` (only names granted as `secret:<name>`)
-and `ctx.fetch` (refuses origins outside the declared and granted destinations).
+and `ctx.fetch` (refuses origins outside the declared and granted destinations, and refuses redirects instead of following them).
 
 ## 5. Evidence rule (enforced in `normalizeCheckOutput`, `src/runtime/runtime.ts`)
 
