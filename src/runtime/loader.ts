@@ -37,11 +37,12 @@ export function destinationAllowed(url: string, patterns: string[]): boolean {
   })
 }
 
-function restrictedFetch(allowed: string[]): typeof fetch {
+/** Only the first URL is checked, so redirects are refused rather than followed to an origin nobody granted. */
+export function restrictedFetch(allowed: string[]): typeof fetch {
   return ((input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     if (!destinationAllowed(url, allowed)) return Promise.reject(new Error(`destination_not_granted:${new URL(url).origin}`))
-    return fetch(input, init)
+    return fetch(input, { ...init, redirect: 'error' })
   }) as typeof fetch
 }
 
