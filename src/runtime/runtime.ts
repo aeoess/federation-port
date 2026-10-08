@@ -348,9 +348,11 @@ export class Runtime {
       out = { outcome: 'unknown', reason: (e as Error).message.slice(0, 120), evidence: new Uint8Array() }
     }
     const retriable = out.outcome === 'unknown' || (out.outcome === 'failed' && out.retriable === true)
+    // Executor reasons are codes like claim reasons: cut, never stored or returned unbounded (section 9).
+    const reason = typeof out.reason === 'string' ? out.reason.slice(0, REASON_MAX) : undefined
     const final = this.store.finishAttempt(opId, attempt,
-      { outcome: out.outcome, retriable, provider_ref: out.provider_ref, reason: out.reason, evidence: out.evidence }, execInfo)
-    return { status: final.state, operation_id: opId, attempt, provider_ref: final.provider_ref, ...(out.reason ? { reason: out.reason } : {}) }
+      { outcome: out.outcome, retriable, provider_ref: out.provider_ref, reason, evidence: out.evidence }, execInfo)
+    return { status: final.state, operation_id: opId, attempt, provider_ref: final.provider_ref, ...(reason ? { reason } : {}) }
   }
 
   /** Provenance for one logical operation. Digests and identifiers only, no payloads or secrets. */

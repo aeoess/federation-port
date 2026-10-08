@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import { Runtime } from '../src/runtime/index.ts'
 import { APPROVED_REFUND } from '../sim/profile.ts'
 import { APS, EXEC, opId, request, restart, setup } from './helpers.ts'
+import type { ExecuteOp, ExecuteOutput } from '../src/contract/types.ts'
 
 test('E1 a confirmation from an attempt whose lease another worker took over is final: the operation is confirmed, not failed', async () => {
   const env = await setup()
@@ -84,5 +85,64 @@ test('E3 a lost response, then an outage, then the deadline: the operation stays
     assert.notEqual((stillDown as { reason?: string }).reason, 'approval_expired_before_retry')
     assert.equal(env.rt.store.getOperation(req.operation_id)!.retriable, 1)
   } finally { if (providerUp) await env.close(); else env.rt.close() }
+})
+
+/** Replace the executor's outcome on chosen attempts; other attempts reach the real provider. */
+function scriptExecutor(env: Awaited<ReturnType<typeof setup>>, outcomes: Record<number, ExecuteOutput>): void {
+  const c = env.rt.component(EXEC)!
+  const original = c.adapter.execute!.bind(c.adapter)
+  c.adapter.execute = async (op: ExecuteOp) => outcomes[op.attempt] ?? original(op)
+}
+
+test('E4 after an unknown attempt, a non-retriable failure does not end the operation as failed', async () => {
+  // e.g. a provider that answers a replayed key with 409 "already refunded", which the
+  // simulator executor maps to failed and not retriable
+  const env = await setup()
+  try {
+    const { req } = request(env)
+    env.provider.setFault({ mode: 'drop_after_commit', count: 1 })
+    assert.equal((await env.rt.submit(req)).status, 'unknown')
+    scriptExecutor(env, { 2: { outcome: 'failed', retriable: false, reason: 'provider_409', evidence: new Uint8Array() } })
+    const r = await env.rt.submit(req)
+    assert.equal(r.status, 'unknown', JSON.stringify(r))
+    const row = env.rt.store.getOperation(req.operation_id)!
+    assert.equal(row.state, 'unknown')
+    assert.equal(row.retriable, 1)
+    assert.deepEqual(env.rt.store.attempts(req.operation_id).map(x => x.outcome), ['unknown', 'failed'])
+  } finally { await env.close() }
+})
+
+test('E5 an executor reason is stored and returned cut to 120 characters', async () => {
+  const env = await setup()
+  try {
+    const { req } = request(env)
+    scriptExecutor(env, { 1: { outcome: 'failed', retriable: false, reason: 'x'.repeat(100_000), evidence: new Uint8Array() } })
+    const r = await env.rt.submit(req)
+    assert.equal((r as { reason?: string }).reason, 'x'.repeat(120))
+    assert.equal(env.rt.store.attempts(req.operation_id)[0].reason, 'x'.repeat(120))
+    assert.ok(JSON.stringify(env.rt.provenance(req.operation_id)).length < 10_000)
+  } finally { await env.close() }
+})
+
+test('E6 lost response, outage, recovery: the same key reaches the provider, exactly one refund, provider_confirmed', async () => {
+  const env = await setup()
+  try {
+    const T0 = new Date(Date.now() - 1000)
+    await restart(env, env.policy, () => new Date(T0.getTime() + 500))
+    const a = env.operator.issue(APPROVED_REFUND, { issuedAt: T0, ttlMs: 60_000 })
+    const req = { workflow: 'refund', operation_id: opId(), approval_id: a.approval_id, action: { tool: 'refund', args: { ...APPROVED_REFUND } }, evidence: { [APS]: a.evidence } }
+    env.provider.setFault({ mode: 'drop_after_commit', count: 1 })
+    assert.equal((await env.rt.submit(req)).status, 'unknown')
+    // The outage: attempt 2 cannot reach the provider. The provider keeps its state.
+    scriptExecutor(env, { 2: { outcome: 'failed', retriable: true, reason: 'provider_unreachable', evidence: new Uint8Array() } })
+    assert.equal((await env.rt.submit(req)).status, 'unknown')
+    // Recovery, after the deadline: an unknown operation is retried with the same key.
+    await restart(env, env.policy, () => new Date(Date.parse(a.valid_until) + 1))
+    const done = await env.rt.submit(req)
+    assert.equal(done.status, 'provider_confirmed', JSON.stringify(done))
+    assert.equal(env.provider.refunds.length, 1)
+    assert.equal(env.provider.refunds[0].idempotency_key, req.operation_id)
+    assert.deepEqual(env.rt.store.attempts(req.operation_id).map(x => x.outcome), ['unknown', 'failed', 'provider_confirmed'])
+  } finally { await env.close() }
 })
 

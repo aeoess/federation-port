@@ -117,9 +117,9 @@ before this transaction commits has consumed nothing.
 `dispatched` → `provider_confirmed` | `failed` | `unknown`. There is no persisted `authorized` state: admission
 and the first dispatch claim commit together. `provider_confirmed` is final: a confirmation reported by any
 attempt, including one whose lease a later attempt took over, sets the operation's state, and no later outcome
-replaces it. A `failed` outcome marked retriable describes only the attempt that reported it: if an earlier attempt
-of the same operation did not also report `failed` and retriable, the operation becomes `unknown`, because that
-earlier attempt may have reached the provider. A transport error after the request may have been sent is
+replaces it. A `failed` outcome, retriable or not, describes only the attempt that reported it: if an earlier attempt of the
+same operation did not report a retriable `failed`, the operation becomes `unknown`, because that earlier attempt
+may have reached the provider. A transport error after the request may have been sent is
 `unknown`, never `failed`. Dispatch is claimed under a lease, so concurrent retries do not double-dispatch; a
 lease left by a crashed worker expires. A confirmed operation replays its result without dispatch.
 
@@ -159,8 +159,9 @@ secret not provisioned, entry missing `createAdapter`, role method missing, `des
 
 Per logical operation: policy id, workflow, tenant, execution context and its digest, action digest, approval id, state, every admission decision (components with
 version and digests, per-claim status and requirement, evidence digests), every attempt with outcome. No action
-arguments, evidence bytes or secrets. Claim reasons and executor reasons are stored as reported, cut to 120
-characters; they are codes, and an adapter must not put arguments, evidence or secrets in them. Usage: one row per component per logical operation, `calls` counting
+arguments, evidence bytes or secrets. Claim reasons and executor reasons are stored and returned cut to 120
+characters. They are codes: an adapter must not put arguments, evidence or secrets in them, and the length bound
+does not stop a short secret, so that obligation stays with the adapter. Usage: one row per component per logical operation, `calls` counting
 invocations including retries, `outcome` the last state. No settlement, pricing or revenue logic.
 
 ## 10. Trust boundary and limits
