@@ -117,7 +117,9 @@ before this transaction commits has consumed nothing.
 `dispatched` → `provider_confirmed` | `failed` | `unknown`. There is no persisted `authorized` state: admission
 and the first dispatch claim commit together. `provider_confirmed` is final: a confirmation reported by any
 attempt, including one whose lease a later attempt took over, sets the operation's state, and no later outcome
-replaces it. A transport error after the request may have been sent is
+replaces it. A `failed` outcome marked retriable describes only the attempt that reported it: if an earlier attempt
+of the same operation did not also report `failed` and retriable, the operation becomes `unknown`, because that
+earlier attempt may have reached the provider. A transport error after the request may have been sent is
 `unknown`, never `failed`. Dispatch is claimed under a lease, so concurrent retries do not double-dispatch; a
 lease left by a crashed worker expires. A confirmed operation replays its result without dispatch.
 

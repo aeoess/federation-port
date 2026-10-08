@@ -235,9 +235,19 @@ export class Store {
       // attempt whose lease another worker took over can still have reached the provider, and
       // its confirmation is the observation the later attempt's outcome cannot overrule. Any
       // other stale result loses to the later attempt.
+      // A failure this attempt reports as retriable means *this* attempt caused no side effect.
+      // It says nothing about an earlier attempt that did not report the same: that one may have
+      // reached the provider (it confirmed, its response was lost, or it never reported). Then
+      // the operation stays unknown, so it is retried with the same key and never closed as a
+      // failure that "had no side effect" (section 7).
+      const earlierUncertain = r.outcome === 'failed' && r.retriable && (this.db.prepare(
+        `SELECT COUNT(*) AS n FROM attempts WHERE operation_id = ? AND attempt < ?
+           AND NOT (COALESCE(outcome, '') = 'failed' AND COALESCE(retriable, 0) = 1)`)
+        .get(opId, attempt) as { n: number }).n > 0
+      const operationOutcome = earlierUncertain ? 'unknown' : r.outcome
       if (row.state !== 'provider_confirmed' && (row.attempts === attempt || r.outcome === 'provider_confirmed')) {
         this.db.prepare('UPDATE operations SET state = ?, retriable = ?, lease_until = 0, provider_ref = ?, updated_at = ? WHERE operation_id = ?')
-          .run(r.outcome, r.retriable ? 1 : 0, r.provider_ref ?? null, at, opId)
+          .run(operationOutcome, r.retriable ? 1 : 0, r.provider_ref ?? null, at, opId)
       }
       const final = this.getOperation(opId)!
       // One usage row per component per logical operation; calls counts attempts, outcome is the operation state.
