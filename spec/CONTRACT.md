@@ -87,6 +87,10 @@ and `ctx.fetch` (refuses origins outside the declared and granted destinations).
    milliseconds, an offset, `2026-02-30…`, a non-string) makes every claim of the component `unavailable`
    (`adapter_protocol_violation:valid_until`). Boundary: inclusive, admissible while `now <= valid_until` at
    millisecond precision, the same rule the APS authority component applies to its own `approval.unexpired`.
+   The deadline bounds admission and the re-dispatch of a retriable failure (section 7). It does not bound
+   the retry of an `unknown` outcome, which may be the first request the provider receives if the earlier
+   attempt failed before sending. An executor that knows its request was not sent reports `failed` with
+   `retriable: true`, so that case is closed at the deadline instead.
 
 ## 6. Admission
 
@@ -111,7 +115,9 @@ before this transaction commits has consumed nothing.
 ## 7. Operation states and retries
 
 `dispatched` → `provider_confirmed` | `failed` | `unknown`. There is no persisted `authorized` state: admission
-and the first dispatch claim commit together. A transport error after the request may have been sent is
+and the first dispatch claim commit together. `provider_confirmed` is final: a confirmation reported by any
+attempt, including one whose lease a later attempt took over, sets the operation's state, and no later outcome
+replaces it. A transport error after the request may have been sent is
 `unknown`, never `failed`. Dispatch is claimed under a lease, so concurrent retries do not double-dispatch; a
 lease left by a crashed worker expires. A confirmed operation replays its result without dispatch.
 
@@ -151,7 +157,8 @@ secret not provisioned, entry missing `createAdapter`, role method missing, `des
 
 Per logical operation: policy id, workflow, tenant, execution context and its digest, action digest, approval id, state, every admission decision (components with
 version and digests, per-claim status and requirement, evidence digests), every attempt with outcome. No action
-arguments, evidence bytes or secrets. Usage: one row per component per logical operation, `calls` counting
+arguments, evidence bytes or secrets. Claim reasons and executor reasons are stored as reported, cut to 120
+characters; they are codes, and an adapter must not put arguments, evidence or secrets in them. Usage: one row per component per logical operation, `calls` counting
 invocations including retries, `outcome` the last state. No settlement, pricing or revenue logic.
 
 ## 10. Trust boundary and limits

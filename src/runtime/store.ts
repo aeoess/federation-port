@@ -231,8 +231,11 @@ export class Store {
       this.db.prepare('UPDATE attempts SET ended_at = ?, outcome = ?, retriable = ?, provider_ref = ?, reason = ? WHERE operation_id = ? AND attempt = ?')
         .run(at, r.outcome, r.retriable ? 1 : 0, r.provider_ref ?? null, r.reason ?? null, opId, attempt)
       const row = this.getOperation(opId)!
-      // A later attempt or a confirmation already recorded wins over a stale result.
-      if (row.state !== 'provider_confirmed' && row.attempts === attempt) {
+      // A confirmation already recorded is final, and so is a confirmation from any attempt: an
+      // attempt whose lease another worker took over can still have reached the provider, and
+      // its confirmation is the observation the later attempt's outcome cannot overrule. Any
+      // other stale result loses to the later attempt.
+      if (row.state !== 'provider_confirmed' && (row.attempts === attempt || r.outcome === 'provider_confirmed')) {
         this.db.prepare('UPDATE operations SET state = ?, retriable = ?, lease_until = 0, provider_ref = ?, updated_at = ? WHERE operation_id = ?')
           .run(r.outcome, r.retriable ? 1 : 0, r.provider_ref ?? null, at, opId)
       }

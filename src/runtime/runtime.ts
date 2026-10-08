@@ -34,6 +34,9 @@ export interface RuntimeOptions {
   clock?: () => Date
 }
 
+/** Adapter reasons are codes, stored in provenance: cut like executor reasons (section 9). */
+export const REASON_MAX = 120
+
 const EXACT_UTC_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 /** Milliseconds for an exact UTC millisecond instant, undefined for any other form (including impossible dates). */
 export function parseExactInstant(v: unknown): number | undefined {
@@ -82,7 +85,7 @@ export function normalizeCheckOutput(comp: LoadedComponent, out: unknown):
     if (!r || typeof r.claim !== 'string' || !declared.includes(r.claim)) { violations.push(`undeclared_claim:${String(r?.claim)}`); continue }
     if (!CLAIM_STATUSES.includes(r.status)) { violations.push(`invalid_status:${r.claim}`); statuses.set(r.claim, { status: 'unavailable', reason: 'adapter_protocol_violation:status' }); continue }
     if (statuses.has(r.claim)) { violations.push(`duplicate_claim:${r.claim}`); statuses.set(r.claim, { status: 'unavailable', reason: 'adapter_protocol_violation:duplicate' }); continue }
-    statuses.set(r.claim, { status: r.status, ...(typeof r.reason === 'string' ? { reason: r.reason } : {}) })
+    statuses.set(r.claim, { status: r.status, ...(typeof r.reason === 'string' ? { reason: r.reason.slice(0, REASON_MAX) } : {}) })
   }
   for (const c of declared) if (!statuses.has(c)) statuses.set(c, { status: 'unavailable', reason: 'claim_not_reported' })
   return { evidence: o.evidence, ...(validUntilMs !== undefined ? { validUntilMs } : {}), statuses, violations }
