@@ -87,6 +87,8 @@ and `ctx.fetch` (refuses origins outside the declared and granted destinations, 
    milliseconds, an offset, `2026-02-30…`, a non-string) makes every claim of the component `unavailable`
    (`adapter_protocol_violation:valid_until`). Boundary: inclusive, admissible while `now <= valid_until` at
    millisecond precision, the same rule the APS authority component applies to its own `approval.unexpired`.
+   The deadline is an authorization expiry: no request is dispatched after it, first attempt or retry
+   (section 7). An operation still `unknown` at the deadline stays `unknown` until it is reconciled.
 
 ## 6. Admission
 
@@ -111,7 +113,11 @@ before this transaction commits has consumed nothing.
 ## 7. Operation states and retries
 
 `dispatched` → `provider_confirmed` | `failed` | `unknown`. There is no persisted `authorized` state: admission
-and the first dispatch claim commit together. A transport error after the request may have been sent is
+and the first dispatch claim commit together. `provider_confirmed` is final: a confirmation reported by any
+attempt, including one whose lease a later attempt took over, sets the operation's state, and no later outcome
+replaces it. A `failed` outcome, retriable or not, describes only the attempt that reported it: if an earlier attempt of the
+same operation did not report a retriable `failed`, the operation becomes `unknown`, because that earlier attempt
+may have reached the provider. A transport error after the request may have been sent is
 `unknown`, never `failed`. Dispatch is claimed under a lease, so concurrent retries do not double-dispatch; a
 lease left by a crashed worker expires. A confirmed operation replays its result without dispatch.
 
@@ -136,10 +142,13 @@ checked in this order:
 A refused retry does not change the stored operation, so the original request still recovers. Changing the
 policy therefore never reroutes a stored operation to another provider or check set.
 
-Retries after the admission deadline: an `unknown` outcome (or an expired lease) is retried with the same
-idempotency key, because the side effect may already have happened and the retry resolves it. A `failed`
-outcome marked retriable (the provider reported no side effect) is closed instead, result `failed` with
-reason `approval_expired_before_retry`, because dispatching it would be a first side effect after expiry.
+After the admission deadline nothing is dispatched, because a new request could be the first side effect
+after the authorization expired. A retriable `failed` operation (every attempt reported no side effect) is
+closed, result `failed` with reason `approval_expired_before_retry`. An `unknown` operation, or one whose
+lease expired with its worker, stays `unknown` and the submit returns reason `reconciliation_required`: the
+effect may or may not exist, and only a read-only lookup at the provider can tell. V0 has no such lookup
+(section 10). Before the deadline an `unknown` operation is retried with the same idempotency key, so a
+provider must keep idempotency keys at least until the admission deadline plus the execute timeout.
 
 ## 8. Loading
 
@@ -151,7 +160,9 @@ secret not provisioned, entry missing `createAdapter`, role method missing, `des
 
 Per logical operation: policy id, workflow, tenant, execution context and its digest, action digest, approval id, state, every admission decision (components with
 version and digests, per-claim status and requirement, evidence digests), every attempt with outcome. No action
-arguments, evidence bytes or secrets. Usage: one row per component per logical operation, `calls` counting
+arguments, evidence bytes or secrets. Claim reasons and executor reasons are stored and returned cut to at most 120
+UTF-16 code units, on a grapheme boundary. They are codes: an adapter must not put arguments, evidence or secrets in them, and the length bound
+does not stop a short secret, so that obligation stays with the adapter. Usage: one row per component per logical operation, `calls` counting
 invocations including retries, `outcome` the last state. No settlement, pricing or revenue logic.
 
 ## 10. Trust boundary and limits
@@ -178,4 +189,5 @@ Other limits:
 - Deadlines rely on the local clock of each process sharing the store. Clock skew between workers is not handled.
 - The tenant is a caller-supplied label that binds an operation id. The runtime does not authenticate it.
 - The tool-admission check runs at admission, not at each retry.
-- There is no reconciliation endpoint. An `unknown` operation is resolved only when the caller retries.
+- There is no reconciliation endpoint. An `unknown` operation is resolved only by a retry before the deadline;
+  after it, it stays `unknown` with `reconciliation_required`.

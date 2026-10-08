@@ -34,6 +34,25 @@ export interface RuntimeOptions {
   clock?: () => Date
 }
 
+/** Adapter and executor reasons are codes, stored in provenance (section 9): at most this many UTF-16 units. */
+export const REASON_MAX = 120
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+/**
+ * Cut text to at most REASON_MAX UTF-16 code units without splitting a character: the cut falls on a
+ * grapheme boundary, so no lone surrogate and no base letter without its combining mark. A single
+ * grapheme longer than the bound is dropped rather than cut.
+ */
+export function boundReason(text: string): string {
+  if (text.length <= REASON_MAX) return text
+  let out = ''
+  for (const { segment } of graphemes.segment(text)) {
+    if (out.length + segment.length > REASON_MAX) break
+    out += segment
+  }
+  return out
+}
+
 const EXACT_UTC_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 /** Milliseconds for an exact UTC millisecond instant, undefined for any other form (including impossible dates). */
 export function parseExactInstant(v: unknown): number | undefined {
@@ -82,7 +101,7 @@ export function normalizeCheckOutput(comp: LoadedComponent, out: unknown):
     if (!r || typeof r.claim !== 'string' || !declared.includes(r.claim)) { violations.push(`undeclared_claim:${String(r?.claim)}`); continue }
     if (!CLAIM_STATUSES.includes(r.status)) { violations.push(`invalid_status:${r.claim}`); statuses.set(r.claim, { status: 'unavailable', reason: 'adapter_protocol_violation:status' }); continue }
     if (statuses.has(r.claim)) { violations.push(`duplicate_claim:${r.claim}`); statuses.set(r.claim, { status: 'unavailable', reason: 'adapter_protocol_violation:duplicate' }); continue }
-    statuses.set(r.claim, { status: r.status, ...(typeof r.reason === 'string' ? { reason: r.reason } : {}) })
+    statuses.set(r.claim, { status: r.status, ...(typeof r.reason === 'string' ? { reason: boundReason(r.reason) } : {}) })
   }
   for (const c of declared) if (!statuses.has(c)) statuses.set(c, { status: 'unavailable', reason: 'claim_not_reported' })
   return { evidence: o.evidence, ...(validUntilMs !== undefined ? { validUntilMs } : {}), statuses, violations }
@@ -298,7 +317,7 @@ export class Runtime {
         if (n.validUntilMs !== undefined) deadlines.set(id, n.validUntilMs)
         perComponent.set(id, n.statuses)
       } catch (e) {
-        const reason = `component_unavailable:${(e as Error).message.slice(0, 120)}`
+        const reason = boundReason(`component_unavailable:${(e as Error).message}`)
         perComponent.set(id, new Map(c.manifest.claims.map(cl => [cl.id, { status: 'unavailable' as const, reason }])))
       }
     }))
@@ -322,6 +341,7 @@ export class Runtime {
     if (claim.kind === 'in_flight') return { status: 'in_flight', operation_id: opId, attempt: claim.row.attempts }
     if (claim.kind === 'terminal_failed') return { status: 'failed', operation_id: opId, replayed: true }
     if (claim.kind === 'expired') return { status: 'failed', operation_id: opId, reason: 'approval_expired_before_retry' }
+    if (claim.kind === 'reconciliation_required') return { status: 'unknown', operation_id: opId, reason: 'reconciliation_required' }
     return this.execute(opId, wf, action, claim.attempt)
   }
 
@@ -342,12 +362,14 @@ export class Runtime {
       }
     } catch (e) {
       // The side effect may or may not have happened. Never treated as failure or success.
-      out = { outcome: 'unknown', reason: (e as Error).message.slice(0, 120), evidence: new Uint8Array() }
+      out = { outcome: 'unknown', reason: boundReason((e as Error).message), evidence: new Uint8Array() }
     }
     const retriable = out.outcome === 'unknown' || (out.outcome === 'failed' && out.retriable === true)
+    // Executor reasons are codes like claim reasons: cut, never stored or returned unbounded (section 9).
+    const reason = typeof out.reason === 'string' ? boundReason(out.reason) : undefined
     const final = this.store.finishAttempt(opId, attempt,
-      { outcome: out.outcome, retriable, provider_ref: out.provider_ref, reason: out.reason, evidence: out.evidence }, execInfo)
-    return { status: final.state, operation_id: opId, attempt, provider_ref: final.provider_ref, ...(out.reason ? { reason: out.reason } : {}) }
+      { outcome: out.outcome, retriable, provider_ref: out.provider_ref, reason, evidence: out.evidence }, execInfo)
+    return { status: final.state, operation_id: opId, attempt, provider_ref: final.provider_ref, ...(reason ? { reason } : {}) }
   }
 
   /** Provenance for one logical operation. Digests and identifiers only, no payloads or secrets. */
