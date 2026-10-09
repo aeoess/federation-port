@@ -21,8 +21,11 @@ export const validTarget = (t: unknown): t is string => typeof t === 'string' &&
 /** Section 2: a member is present only as an OWN property, whatever its value — undefined is invalid the same as null. An inherited
  *  property never counts, and the runtime reads through the property's own descriptor so an accessor is never invoked: an own getter
  *  (even one that throws) is invalid, not a value to read. */
+// A capture that throws (for example a Proxy whose getOwnPropertyDescriptor or getPrototypeOf trap throws) fails closed:
+// it is reported as a present member that cannot be captured, never as an exception out of the helper.
 function readMember(o: object, k: string): { present: boolean; accessor: boolean; value: unknown } {
-  const d = Object.getOwnPropertyDescriptor(o, k)
+  let d: PropertyDescriptor | undefined
+  try { d = Object.getOwnPropertyDescriptor(o, k) } catch { return { present: true, accessor: true, value: undefined } }
   if (!d) return { present: false, accessor: false, value: undefined }
   if ('get' in d || 'set' in d) return { present: true, accessor: true, value: undefined }
   return { present: true, accessor: false, value: d.value }
@@ -30,7 +33,8 @@ function readMember(o: object, k: string): { present: boolean; accessor: boolean
 /** Section 2: a plain object has Object.prototype or null as its prototype (so not an array, a Date, or an object built on another prototype). */
 export const isPlain = (v: unknown): v is object => {
   if (typeof v !== 'object' || v === null) return false
-  const p = Object.getPrototypeOf(v)
+  let p: object | null
+  try { p = Object.getPrototypeOf(v) } catch { return false }
   return p === Object.prototype || p === null
 }
 
@@ -43,6 +47,10 @@ export function admitRuntimeTarget(req: { target?: unknown }): string | null {
 /** Section 5, steps 1 to 6 in order, for a claim declared binds: "target". Returns the recorded claim and target_match. */
 export function targetMatch(r: Result, runtimeTarget: string): { claim: Result; target_match: Match } {
   const invalidSubject = { claim: { claim: r.claim, status: 'unavailable' as const, reason: 'adapter_protocol_violation:subject' }, target_match: 'invalid_subject' as const }
+  // Section 2 capture: status is read once, through its own descriptor, like subject and subject.target.
+  const st = readMember(r, 'status')
+  if (st.accessor) return invalidSubject
+  const status = st.value
   const sm = readMember(r, 'subject')
   let t: string | undefined
   if (sm.present) {
@@ -53,7 +61,7 @@ export function targetMatch(r: Result, runtimeTarget: string): { claim: Result; 
       t = tm.value as string
     }
   }
-  if (r.status !== 'established') return { claim: r, target_match: 'not_evaluated' }
+  if (status !== 'established') return { claim: r, target_match: 'not_evaluated' }
   if (t === undefined) return { claim: r, target_match: 'missing_subject' }
   return { claim: r, target_match: t === runtimeTarget ? 'matched' : 'mismatched' }
 }
@@ -173,3 +181,19 @@ test('section 2 capture step: own-undefined subject, own-undefined runtime targe
   assert.equal(targetMatch(est({ get target() { throw new Error('must not be called') } }), A).target_match, 'invalid_subject', 'a throwing getter must not be invoked, and must not make targetMatch throw')
 })
 
+// aeoess follow-up after #6: the two corners left open in the merge comment.
+test('section 2 capture step: status read through its descriptor, and a throwing trap fails closed', () => {
+  const A = 'https://api.example.com/a2a'
+  let calls = 0
+  const r = { claim: TGT, subject: { target: A } } as Result
+  Object.defineProperty(r, 'status', { get() { calls++; return 'established' }, enumerable: true })
+  assert.equal(targetMatch(r, A).target_match, 'invalid_subject', 'an accessor on status is invalid, not read')
+  assert.equal(calls, 0, 'the status getter is never invoked')
+  const descriptorTrap = new Proxy({}, { getOwnPropertyDescriptor() { throw new Error('trap') } })
+  assert.equal(targetMatch({ claim: TGT, status: 'established', subject: descriptorTrap }, A).target_match, 'invalid_subject', 'a throwing descriptor trap on the subject is invalid_subject')
+  assert.equal(admitRuntimeTarget(descriptorTrap as { target?: unknown }), 'invalid_target', 'a throwing descriptor trap on the request is invalid_target')
+  const resultTrap = new Proxy({ claim: TGT }, { getOwnPropertyDescriptor() { throw new Error('trap') } }) as Result
+  assert.equal(targetMatch(resultTrap, A).target_match, 'invalid_subject', 'a throwing trap on the result itself is invalid_subject')
+  const prototypeTrap = new Proxy({ target: A }, { getPrototypeOf() { throw new Error('trap') } })
+  assert.equal(targetMatch({ claim: TGT, status: 'established', subject: prototypeTrap }, A).target_match, 'invalid_subject', 'a throwing prototype trap makes the subject not plain')
+})
