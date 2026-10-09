@@ -9,15 +9,15 @@ v0 admits an action when every required claim is `established` (section 6). It n
 ## 2. When the target rules apply
 
 - `WorkflowPolicy` gains `target: "required" | "none"`, default `"none"`.
-- A workflow with `target: "none"` behaves exactly as in v0. A request to it that carries a `target` is refused with `target_not_expected`, so a caller never believes a target was checked when none was. A policy whose `target: "none"` workflow requires a claim with `binds: "target"` is refused at load (`target_claim_without_target`).
-- A workflow with `target: "required"` applies sections 3 to 6. A request to it with no `target` is refused with `no_runtime_target`. A request with a `target` that is not valid (section 3) is refused with `invalid_target`.
+- A workflow with `target: "none"` behaves exactly as in v0. A request to it that carries a `target` member, whatever its value, including `null`, is refused with `target_not_expected`, so a caller never believes a target was checked when none was. A policy whose `target: "none"` workflow requires a claim with `binds: "target"` is refused at load (`target_claim_without_target`).
+- A workflow with `target: "required"` applies sections 3 to 6. A request to it with no `target` member is refused with `no_runtime_target`. A request whose `target` member is present but not valid (section 3), including `null`, is refused with `invalid_target`.
 - A policy with a `target: "required"` workflow that has no required claim with `binds: "target"` is refused at load (`workflow_without_target_claim`). Otherwise such a workflow could admit without checking the target at all. This rule is added in this draft and was not discussed on #177.
 - The customer policy chooses which target-bound claims are required. Matching the target does not make different claims interchangeable. A walk of an endpoint, a verdict on an action at that endpoint and a check of the tool it serves are different guarantees, and none establishes anything outside its own declared semantics.
 
 ## 3. Dispatch target
 
 - `SubmitRequest` gains an optional `target`, naming where the executor is to send the action. It sits next to `action`, never inside it. Putting it inside would change the action's hashed bytes, so an action already approved or verified would need new evidence.
-- A valid `target` is an opaque, non-empty sequence of Unicode scalar values (in JavaScript, a string with no lone surrogates). Its UTF-8 encoding is used for hashing. The runtime does not normalize it, does not parse it as a URL, and never treats two different strings as the same target.
+- A valid `target` is an opaque, non-empty sequence of Unicode scalar values (in JavaScript, a string with no lone surrogates). Its UTF-8 encoding is used for hashing. The runtime does not normalize it, does not parse it as a URL, and never treats two different strings as the same target. Excluding lone surrogates also keeps `target_digest` (section 6) unambiguous. Encoded to UTF-8, a lone surrogate becomes the bytes of U+FFFD, so without this rule `x\uD800` and the valid target `x\uFFFD` would share a digest.
 - At submission the runtime validates the target and takes an immutable copy before any component check runs, as it does for the action. That one value is used for every component check, the subject comparison, admission, the durable binding and dispatch. The runtime does not read `SubmitRequest.target` again between those steps.
 - The runtime passes that value to every component as `CheckInput.target` and to the executor as `ExecuteOp.target`.
 
@@ -69,7 +69,7 @@ Three things stay separate. The component's evidence covers a subject. The runti
 ## 8. Open questions
 
 - **Destination authorization.** Whether v1 should define a binding that ties an authorization to a target, separate from target coverage.
-- **Digest-encoded subjects.** Proposed on #177 as case J6. A component that holds only a digest of the target reports `subject.target_sha256`, and it matches when it equals the lowercase hex SHA-256 of the target's UTF-8 bytes, without the `sha256:` prefix that `target_digest` carries. Not adopted. With a structured `subject.target`, a component that holds the value does not need it. J6 admits only with a local rewrite placed in front of `decide()`.
+- **Digest-encoded subjects.** Proposed on #177 as case J6. A component that holds only a digest of the target reports `subject.target_sha256`, and it matches when it equals the lowercase hex SHA-256 of the target's UTF-8 bytes, without the `sha256:` prefix that `target_digest` carries. Not adopted. With a structured `subject.target`, a component that holds the value does not need it. invinoveritas, so far the one component returning a structured subject, reports the value and has said it has no use for the digest form. J6 admits only with a local rewrite placed in front of `decide()`.
 - **Length.** The maximum encoded length of a target and of a reported subject, and whether an oversized value is refused or makes the claim `unavailable`. Until this is settled, the text sets no bound.
 - **Unknown subject members.** Whether members of `subject` other than `target` are ignored or make the claim `unavailable`.
 - **Result format.** The exact shape and names of `target_match` in results and provenance.
@@ -82,7 +82,8 @@ Three things stay separate. The component's evidence covers a subject. The runti
 
 - T1 to T6 and R1 (babyblueviper1, merged in #4): `v1-candidates/target-coverage/reproduce.sh` at `d9c8a9c` gives tests 8, pass 8, fail 0 with invinoveritas `verdict-check` 0.3.0.
 - J1 to J6 (ogasurfproject-jpg): joint invinoveritas and NENRIN cases at `ogasurfproject-jpg/horizon-shield@0febb7cb`, reported 14/14 by their author on #177. Not run in this repository.
-- What these cover. They exercise the v0 stand-in, the subject carried in `reason` as `subject:target=<value>`, and the comparison rule in `decide()`. They do not exercise the structured `subject` field, target validation, retries, durable binding, `target_match`, or section 2's activation rules. `decide()` does not validate targets, so it admits a matching empty or lone-surrogate target. Before this text is adopted, it needs vectors for a missing, `null`, empty and malformed-Unicode target, for each step in section 5, for an optional claim that is malformed or mismatched (recorded, not blocking), for claims with the same id from different components staying distinct, for a retry with a changed or removed target, for the `operation_exists` path, and for a caller changing its request object while a component check is pending.
+- Section 5 steps and target validation (babyblueviper1, #6): `v1-candidates/target-subject/reproduce.sh` at `59d3b8f` gives tests 18, pass 18, fail 0 with invinoveritas `verdict-check` 0.4.0, run from a clean clone. It covers every step in section 5 and a missing, `null`, empty and lone-surrogate target, as candidate rules in its own test file.
+- What these cover. T1 to T6 exercise the v0 stand-in, the subject carried in `reason`, and the comparison in `decide()`. The #6 cases exercise the structured subject and target validation against candidate rules, not a runtime. None of them exercise retries, durable binding, `target_match` recorded by a runtime, section 2's activation and load rules, optional claims, claims with the same id from different components, the `operation_exists` path, or a caller changing its request object while a component check is pending. Each needs vectors before this text is adopted.
 
 ## 10. Changes this would make
 
