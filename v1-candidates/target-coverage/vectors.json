@@ -1,0 +1,321 @@
+{
+  "schema": "federation-port/v1-candidate/target-coverage",
+  "status": "candidate, not part of any contract version",
+  "component": "invinoveritas/verdict-check",
+  "component_coverage": {
+    "invinoveritas.verdict_authentic": "context",
+    "invinoveritas.verdict_covers_action": "action",
+    "invinoveritas.verdict_permits_action": "action",
+    "invinoveritas.verdict_covers_target": "target"
+  },
+  "component_config": {
+    "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+    "accept_verdicts": [
+      "approve"
+    ],
+    "max_age_s": 315360000
+  },
+  "now": "2026-10-09T12:00:00.000Z",
+  "key_note": "Verdicts are signed with a BIP-340 test key derived from a fixed string; not the production invinoveritas key.",
+  "cases": [
+    {
+      "id": "T1",
+      "name": "target_in_hash_matches_runtime_target",
+      "description": "The reviewed action names target A, the verdict covers that action, the runtime dispatches to A.",
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/a2a"
+        }
+      },
+      "runtime_target": "https://a.example/a2a",
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+        "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+        "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+      },
+      "requirements": [
+        {
+          "claim": "invinoveritas.verdict_covers_target",
+          "binds": "target"
+        }
+      ],
+      "expected": {
+        "claims": {
+          "invinoveritas.verdict_covers_action": "established",
+          "invinoveritas.verdict_covers_target": "established"
+        },
+        "reported_target": "https://a.example/a2a",
+        "decision": "admit"
+      }
+    },
+    {
+      "id": "T2",
+      "name": "cross_target_reuse",
+      "description": "A verdict issued on the action for target A is presented for the same action sent to target B. The hash differs, so nothing is covered.",
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://b.example/a2a"
+        }
+      },
+      "runtime_target": "https://b.example/a2a",
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+        "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+        "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+      },
+      "requirements": [
+        {
+          "claim": "invinoveritas.verdict_covers_target",
+          "binds": "target"
+        }
+      ],
+      "expected": {
+        "claims": {
+          "invinoveritas.verdict_covers_action": "not_established",
+          "invinoveritas.verdict_covers_target": "not_established"
+        },
+        "reason": "verdict_is_for_a_different_action",
+        "decision": "refuse"
+      }
+    },
+    {
+      "id": "T3",
+      "name": "signed_target_A_runtime_target_B",
+      "description": "The action and its verdict both name A, so the action is covered, but the runtime dispatches to B. The target-bound requirement fails.",
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/a2a"
+        }
+      },
+      "runtime_target": "https://b.example/a2a",
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+        "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+        "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+      },
+      "requirements": [
+        {
+          "claim": "invinoveritas.verdict_covers_target",
+          "binds": "target"
+        }
+      ],
+      "expected": {
+        "claims": {
+          "invinoveritas.verdict_covers_action": "established",
+          "invinoveritas.verdict_covers_target": "not_established"
+        },
+        "reason": "verdict_target_is_not_the_runtime_target",
+        "decision": "refuse"
+      }
+    },
+    {
+      "id": "T4",
+      "name": "no_runtime_target",
+      "description": "The action and verdict name A, the workflow declares no runtime target. A target-bound requirement cannot be established.",
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/a2a"
+        }
+      },
+      "runtime_target": null,
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+        "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+        "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+      },
+      "requirements": [
+        {
+          "claim": "invinoveritas.verdict_covers_target",
+          "binds": "target"
+        }
+      ],
+      "expected": {
+        "claims": {
+          "invinoveritas.verdict_covers_action": "established",
+          "invinoveritas.verdict_covers_target": "not_established"
+        },
+        "reason": "no_runtime_target",
+        "decision": "refuse"
+      }
+    },
+    {
+      "id": "T4b",
+      "name": "no_runtime_target_action_bound_only",
+      "description": "Same inputs as T4, but the workflow requires only the action-bound claim: today's v0 behaviour, admitted, with no target guarantee.",
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/a2a"
+        }
+      },
+      "runtime_target": null,
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+        "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+        "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+      },
+      "requirements": [
+        {
+          "claim": "invinoveritas.verdict_covers_action",
+          "binds": "action"
+        }
+      ],
+      "expected": {
+        "claims": {
+          "invinoveritas.verdict_covers_action": "established",
+          "invinoveritas.verdict_covers_target": "not_established"
+        },
+        "decision": "admit"
+      }
+    },
+    {
+      "id": "T5",
+      "name": "target_not_in_hashed_action",
+      "description": "The reviewed action carries no target. The runtime dispatches to A. The verdict covers the action and says nothing about A.",
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR"
+        }
+      },
+      "runtime_target": "https://a.example/a2a",
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"3762ec63b47436741aca750335b32483d2d12935de3b5a9a1dd4b2d876cdeeeb\",\"verdict\":\"approve\"}",
+        "id": "01ac2be80ac2b70cefaee0b8788f03c7a4bf3b0ac64feb8e0bbbb03e49d7e4c8",
+        "sig": "2a7727fcc9d677191b0613df6ef4acce3801c6913929cf58f710bdc1e10a18ecff86b18c077b5d42f15d67f54815abe5f0d7fbd742714b38b10e6333c23c0aa2"
+      },
+      "requirements": [
+        {
+          "claim": "invinoveritas.verdict_covers_target",
+          "binds": "target"
+        }
+      ],
+      "expected": {
+        "claims": {
+          "invinoveritas.verdict_covers_action": "established",
+          "invinoveritas.verdict_covers_target": "not_established"
+        },
+        "reason": "target_not_in_hashed_action",
+        "decision": "refuse"
+      }
+    },
+    {
+      "id": "T6",
+      "name": "action_bound_claim_offered_for_target_requirement",
+      "description": "The workflow requires target binding but the policy names only the action-bound claim as binding the target. An action-bound claim alone does not satisfy a target-bound requirement, even when the action contains the target.",
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/a2a"
+        }
+      },
+      "runtime_target": "https://a.example/a2a",
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+        "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+        "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+      },
+      "requirements": [
+        {
+          "claim": "invinoveritas.verdict_covers_action",
+          "binds": "target"
+        }
+      ],
+      "expected": {
+        "claims": {
+          "invinoveritas.verdict_covers_action": "established",
+          "invinoveritas.verdict_covers_target": "established"
+        },
+        "decision": "refuse",
+        "refusal": "claim_does_not_bind_target"
+      }
+    }
+  ]
+}
