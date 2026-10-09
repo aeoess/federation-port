@@ -1,0 +1,637 @@
+{
+  "schema": "federation-port/v1-candidate/target-subject",
+  "status": "candidate, not part of any contract version",
+  "draft": "aeoess/federation-port#5 spec/CONTRACT-v1-target.md, sections 2, 3 and 5",
+  "component": "invinoveritas/verdict-check",
+  "component_coverage": {
+    "invinoveritas.verdict_authentic": "context",
+    "invinoveritas.verdict_covers_action": "action",
+    "invinoveritas.verdict_permits_action": "action",
+    "invinoveritas.verdict_covers_target": "target"
+  },
+  "component_config": {
+    "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+    "accept_verdicts": [
+      "approve"
+    ],
+    "max_age_s": 315360000
+  },
+  "synthetic_coverage": {
+    "x.covers_target": "target"
+  },
+  "now": "2026-10-09T12:00:00.000Z",
+  "key_note": "Verdicts are signed with a BIP-340 test key derived from a fixed string; not the production invinoveritas key.",
+  "subject_cases": [
+    {
+      "id": "S1",
+      "step": 1,
+      "name": "subject_not_a_plain_object",
+      "description": "An established target-bound claim whose subject is null, an array or a string. The claim becomes unavailable and target_match is invalid_subject.",
+      "variants": [
+        {
+          "source": "synthetic",
+          "runtime_target": "https://a.example/a2a",
+          "result": {
+            "claim": "x.covers_target",
+            "status": "established",
+            "subject": null
+          }
+        },
+        {
+          "source": "synthetic",
+          "runtime_target": "https://a.example/a2a",
+          "result": {
+            "claim": "x.covers_target",
+            "status": "established",
+            "subject": [
+              "https://a.example/a2a"
+            ]
+          }
+        },
+        {
+          "source": "synthetic",
+          "runtime_target": "https://a.example/a2a",
+          "result": {
+            "claim": "x.covers_target",
+            "status": "established",
+            "subject": "https://a.example/a2a"
+          }
+        }
+      ],
+      "expected": {
+        "claim_status": "unavailable",
+        "claim_reason": "adapter_protocol_violation:subject",
+        "target_match": "invalid_subject",
+        "decision": "refuse",
+        "refusal": "required_claim_unavailable:x.covers_target"
+      }
+    },
+    {
+      "id": "S1b",
+      "step": 1,
+      "name": "subject_checked_before_status",
+      "description": "The same malformed subject on a claim that is not established. Steps 1 and 2 come before step 3, so it is still a protocol violation, not not_evaluated.",
+      "variants": [
+        {
+          "source": "synthetic",
+          "runtime_target": "https://a.example/a2a",
+          "result": {
+            "claim": "x.covers_target",
+            "status": "not_established",
+            "subject": null
+          }
+        }
+      ],
+      "expected": {
+        "claim_status": "unavailable",
+        "claim_reason": "adapter_protocol_violation:subject",
+        "target_match": "invalid_subject",
+        "decision": "refuse",
+        "refusal": "required_claim_unavailable:x.covers_target"
+      }
+    },
+    {
+      "id": "S2",
+      "step": 2,
+      "name": "subject_target_not_a_valid_target",
+      "description": "subject.target is present but not a valid target (section 3): empty, a lone high surrogate, a lone low surrogate, a number.",
+      "variants": [
+        {
+          "source": "synthetic",
+          "runtime_target": "https://a.example/a2a",
+          "result": {
+            "claim": "x.covers_target",
+            "status": "established",
+            "subject": {
+              "target": ""
+            }
+          }
+        },
+        {
+          "source": "synthetic",
+          "runtime_target": "https://a.example/a2a",
+          "result": {
+            "claim": "x.covers_target",
+            "status": "established",
+            "subject": {
+              "target": "https://a.example/\ud800"
+            }
+          }
+        },
+        {
+          "source": "synthetic",
+          "runtime_target": "https://a.example/a2a",
+          "result": {
+            "claim": "x.covers_target",
+            "status": "established",
+            "subject": {
+              "target": "https://a.example/\udc00"
+            }
+          }
+        },
+        {
+          "source": "synthetic",
+          "runtime_target": "https://a.example/a2a",
+          "result": {
+            "claim": "x.covers_target",
+            "status": "established",
+            "subject": {
+              "target": 42
+            }
+          }
+        }
+      ],
+      "expected": {
+        "claim_status": "unavailable",
+        "claim_reason": "adapter_protocol_violation:subject",
+        "target_match": "invalid_subject",
+        "decision": "refuse",
+        "refusal": "required_claim_unavailable:x.covers_target"
+      }
+    },
+    {
+      "id": "S3",
+      "step": 3,
+      "name": "claim_not_established",
+      "description": "The action and its verdict name A, the runtime target is B. Our component compares too, so it returns not_established with subject A. The runtime does not compare: not_evaluated, and the claim's own refusal.",
+      "variants": [
+        {
+          "source": "component",
+          "action": {
+            "tool": "refund",
+            "args": {
+              "payment_id": "pay_A",
+              "amount_minor": 4000,
+              "currency": "EUR",
+              "target": "https://a.example/a2a"
+            }
+          },
+          "runtime_target": "https://b.example/a2a",
+          "evidence": {
+            "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+            "created_at": 1791504000,
+            "kind": 30078,
+            "tags": [
+              [
+                "schema",
+                "invinoveritas.verdict_proof.v1"
+              ]
+            ],
+            "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+            "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+            "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+          }
+        }
+      ],
+      "expected": {
+        "claim_status": "not_established",
+        "component_reason": "verdict_target_is_not_the_runtime_target",
+        "component_subject": {
+          "target": "https://a.example/a2a"
+        },
+        "target_match": "not_evaluated",
+        "decision": "refuse",
+        "refusal": "required_claim_not_established:invinoveritas.verdict_covers_target"
+      }
+    },
+    {
+      "id": "S4",
+      "step": 4,
+      "name": "subject_missing",
+      "description": "An established target-bound claim with no subject, in the shape verdict-check 0.3.0 returns (the target only as subject:target=<value> in reason). A v1 runtime reads only subject (section 8), so this is missing_subject.",
+      "variants": [
+        {
+          "source": "synthetic",
+          "runtime_target": "https://a.example/a2a",
+          "result": {
+            "claim": "invinoveritas.verdict_covers_target",
+            "status": "established",
+            "reason": "subject:target=https://a.example/a2a"
+          }
+        },
+        {
+          "source": "synthetic",
+          "runtime_target": "https://a.example/a2a",
+          "result": {
+            "claim": "x.covers_target",
+            "status": "established",
+            "subject": {}
+          }
+        }
+      ],
+      "expected": {
+        "claim_status": "established",
+        "target_match": "missing_subject",
+        "decision": "refuse",
+        "refusal": "no_reported_subject"
+      }
+    },
+    {
+      "id": "S5",
+      "step": 5,
+      "name": "subject_target_differs",
+      "description": "A component that only reports (as an endpoint walk does) returns established with subject A while the runtime target is B. Exact string, so the trailing slash is a different target too.",
+      "variants": [
+        {
+          "source": "synthetic",
+          "runtime_target": "https://b.example/a2a",
+          "result": {
+            "claim": "x.covers_target",
+            "status": "established",
+            "subject": {
+              "target": "https://a.example/a2a"
+            }
+          }
+        },
+        {
+          "source": "synthetic",
+          "runtime_target": "https://a.example/a2a",
+          "result": {
+            "claim": "x.covers_target",
+            "status": "established",
+            "subject": {
+              "target": "https://a.example/a2a/"
+            }
+          }
+        }
+      ],
+      "expected": {
+        "claim_status": "established",
+        "target_match": "mismatched",
+        "decision": "refuse",
+        "refusal": "reported_target_is_not_the_runtime_target"
+      }
+    },
+    {
+      "id": "S6",
+      "step": 6,
+      "name": "subject_target_equals_runtime_target",
+      "description": "The action and its verdict name the runtime target. Our component returns established with subject.target, including a 218-character target that the 120-unit reason would only carry as a digest.",
+      "variants": [
+        {
+          "source": "component",
+          "action": {
+            "tool": "refund",
+            "args": {
+              "payment_id": "pay_A",
+              "amount_minor": 4000,
+              "currency": "EUR",
+              "target": "https://a.example/a2a"
+            }
+          },
+          "runtime_target": "https://a.example/a2a",
+          "evidence": {
+            "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+            "created_at": 1791504000,
+            "kind": 30078,
+            "tags": [
+              [
+                "schema",
+                "invinoveritas.verdict_proof.v1"
+              ]
+            ],
+            "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+            "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+            "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+          }
+        },
+        {
+          "source": "component",
+          "action": {
+            "tool": "refund",
+            "args": {
+              "payment_id": "pay_A",
+              "amount_minor": 4000,
+              "currency": "EUR",
+              "target": "https://a.example/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          },
+          "runtime_target": "https://a.example/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "evidence": {
+            "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+            "created_at": 1791504000,
+            "kind": 30078,
+            "tags": [
+              [
+                "schema",
+                "invinoveritas.verdict_proof.v1"
+              ]
+            ],
+            "content": "{\"artifact_hash\":\"536dc544000a4f5ced78bb95085b0f60081e33e199973a40b383f28548b8c862\",\"verdict\":\"approve\"}",
+            "id": "c0546f5745eea8a2ae76e5d746fb50d8be37c8fab25c19a8c7c6dcb7413870c8",
+            "sig": "f8f6a4ae2894b752d6aef81a536d6ba3d4286c7a9899b8fe830860920261f630a19cd43f2de146644d56e2c2709387b74b86379bff7a277bc96349c6be2cfc4e"
+          }
+        }
+      ],
+      "expected": {
+        "claim_status": "established",
+        "target_match": "matched",
+        "decision": "admit"
+      }
+    }
+  ],
+  "target_cases": [
+    {
+      "id": "R-missing",
+      "name": "no_runtime_target",
+      "runtime_target": {
+        "absent": true
+      },
+      "expected": {
+        "refusal": "no_runtime_target",
+        "component_reason": "no_runtime_target"
+      },
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/a2a"
+        }
+      },
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+        "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+        "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+      }
+    },
+    {
+      "id": "R-null",
+      "name": "null_runtime_target",
+      "runtime_target": {
+        "value": null
+      },
+      "expected": {
+        "refusal": "invalid_target",
+        "component_reason": "no_runtime_target"
+      },
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/a2a"
+        }
+      },
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+        "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+        "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+      }
+    },
+    {
+      "id": "R-empty",
+      "name": "empty_runtime_target",
+      "runtime_target": {
+        "value": ""
+      },
+      "expected": {
+        "refusal": "invalid_target",
+        "component_reason": "verdict_target_is_not_the_runtime_target"
+      },
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/a2a"
+        }
+      },
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+        "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+        "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+      }
+    },
+    {
+      "id": "R-lone-high",
+      "name": "lone_high_surrogate",
+      "runtime_target": {
+        "value": "https://a.example/a2a\ud800"
+      },
+      "expected": {
+        "refusal": "invalid_target",
+        "component_reason": "verdict_target_is_not_the_runtime_target"
+      },
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/a2a"
+        }
+      },
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+        "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+        "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+      }
+    },
+    {
+      "id": "R-lone-low",
+      "name": "lone_low_surrogate",
+      "runtime_target": {
+        "value": "\udc00https://a.example/a2a"
+      },
+      "expected": {
+        "refusal": "invalid_target",
+        "component_reason": "verdict_target_is_not_the_runtime_target"
+      },
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/a2a"
+        }
+      },
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+        "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+        "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+      }
+    },
+    {
+      "id": "R-valid",
+      "name": "valid_runtime_target_control",
+      "runtime_target": {
+        "value": "https://a.example/a2a"
+      },
+      "expected": {
+        "refusal": null,
+        "component_reason": "subject:target=https://a.example/a2a"
+      },
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/a2a"
+        }
+      },
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"99f2b9d28ce816c46453ca74f1a1e2e4a1d12ad2c1c3b12a6303d27d35ae6bb0\",\"verdict\":\"approve\"}",
+        "id": "795955443b686d269948b545fac7923074074df7755741e9842cd71d958116f4",
+        "sig": "0988710f60891347cb76765c7b34feae568657dae001434f3e98e86aa54d783be04ae01e2fa4d80f502b7a1f5523397e29a7efb148053621f023e292d426e299"
+      }
+    }
+  ],
+  "hashed_invalid": [
+    {
+      "id": "H1",
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": ""
+        }
+      },
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"1523d9dc97f5ea6ead65373e83a54744fdc4175ff547c94e04e310d3f4dd0da1\",\"verdict\":\"approve\"}",
+        "id": "b49954ab2a951e6a43c43bb482ed438d5f4a4fb710e7a8f1f9f2ddeef05b4ac9",
+        "sig": "0c97dfa4050cadc80831e3365325bea8cb25c82e49983e8692b016b0bfd63c11d635bdccaa58b3f57738afcd4fc990c285bef32f0ccf13fef89650aa7d702fb2"
+      },
+      "runtime_target": "",
+      "expected": {
+        "status": "not_established",
+        "reason": "target_not_valid",
+        "subject": null
+      }
+    },
+    {
+      "id": "H2",
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/\ud800"
+        }
+      },
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"18843f536be3be8968598057b5073613744f85f5bb91251977a83952240a3f21\",\"verdict\":\"approve\"}",
+        "id": "1b707dea016f5b2ceec28667d2265b3646c07e75398ddd38c05f0af3736ff6c7",
+        "sig": "566634b2458ca97bb4ecbb104ec0777b383e639ef8d6302f8089be8e0cee3138967cbcba7322f042edcf9cfa80916fffd0a8335408a7e889a13f48778030c54f"
+      },
+      "runtime_target": "https://a.example/\ud800",
+      "expected": {
+        "status": "not_established",
+        "reason": "target_not_valid",
+        "subject": null
+      }
+    },
+    {
+      "id": "H3",
+      "action": {
+        "tool": "refund",
+        "args": {
+          "payment_id": "pay_A",
+          "amount_minor": 4000,
+          "currency": "EUR",
+          "target": "https://a.example/\udc00"
+        }
+      },
+      "evidence": {
+        "pubkey": "481a70949047331f0a5aa6ed2b584f1dfa225816f6be22e15c64520ab6dc4302",
+        "created_at": 1791504000,
+        "kind": 30078,
+        "tags": [
+          [
+            "schema",
+            "invinoveritas.verdict_proof.v1"
+          ]
+        ],
+        "content": "{\"artifact_hash\":\"1c124eb237094d4f6045471c4fd015f98e7c36039b556dba76afe373c60efc2f\",\"verdict\":\"approve\"}",
+        "id": "6c24347663d8c7340bae64aa910be4be9cf064589b689dcb374c3f30cdbd2443",
+        "sig": "495c71029067d569c83b1a7ac36967bab192d21b9989fb4f010ab3e38343bfcd1282a4d4d2a3003cb39a2f8a2d51f3f26fa9525531123646629a1570f0d72f40"
+      },
+      "runtime_target": "https://a.example/\udc00",
+      "expected": {
+        "status": "not_established",
+        "reason": "target_not_valid",
+        "subject": null
+      }
+    }
+  ]
+}
