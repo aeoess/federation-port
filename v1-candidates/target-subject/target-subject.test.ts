@@ -21,16 +21,22 @@ export const validTarget = (t: unknown): t is string => typeof t === 'string' &&
 /** Section 2: a member is present only as an OWN property, whatever its value — undefined is invalid the same as null. An inherited
  *  property never counts, and the runtime reads through the property's own descriptor so an accessor is never invoked: an own getter
  *  (even one that throws) is invalid, not a value to read. */
+// A capture that throws (for example a Proxy whose getOwnPropertyDescriptor or getPrototypeOf trap throws) fails closed:
+// it is reported as a present member that cannot be captured, never as an exception out of the helper.
 function readMember(o: object, k: string): { present: boolean; accessor: boolean; value: unknown } {
-  const d = Object.getOwnPropertyDescriptor(o, k)
+  let d: PropertyDescriptor | undefined
+  try { d = Object.getOwnPropertyDescriptor(o, k) } catch { return { present: true, accessor: true, value: undefined } }
   if (!d) return { present: false, accessor: false, value: undefined }
   if ('get' in d || 'set' in d) return { present: true, accessor: true, value: undefined }
   return { present: true, accessor: false, value: d.value }
 }
+/** Section 2: a present member whose value has no JSON form (undefined, a function, a symbol, a bigint) cannot be captured. */
+const capturable = (v: unknown): boolean => v !== undefined && typeof v !== 'function' && typeof v !== 'symbol' && typeof v !== 'bigint'
 /** Section 2: a plain object has Object.prototype or null as its prototype (so not an array, a Date, or an object built on another prototype). */
 export const isPlain = (v: unknown): v is object => {
   if (typeof v !== 'object' || v === null) return false
-  const p = Object.getPrototypeOf(v)
+  let p: object | null
+  try { p = Object.getPrototypeOf(v) } catch { return false }
   return p === Object.prototype || p === null
 }
 
@@ -42,7 +48,16 @@ export function admitRuntimeTarget(req: { target?: unknown }): string | null {
 
 /** Section 5, steps 1 to 6 in order, for a claim declared binds: "target". Returns the recorded claim and target_match. */
 export function targetMatch(r: Result, runtimeTarget: string): { claim: Result; target_match: Match } {
-  const invalidSubject = { claim: { claim: r.claim, status: 'unavailable' as const, reason: 'adapter_protocol_violation:subject' }, target_match: 'invalid_subject' as const }
+  // Section 2 capture: claim, status, reason, subject and subject.target are each read once, through their own descriptors.
+  // The returned record is built from those captured values, never the component's object, so later mutation cannot change it.
+  const cm = readMember(r, 'claim')
+  const claim = (cm.accessor ? undefined : cm.value) as string
+  const invalidSubject = { claim: { claim, status: 'unavailable', reason: 'adapter_protocol_violation:subject' }, target_match: 'invalid_subject' as const }
+  if (cm.accessor || (cm.present && !capturable(cm.value))) return invalidSubject
+  const st = readMember(r, 'status')
+  if (st.accessor || (st.present && !capturable(st.value))) return invalidSubject
+  const rm = readMember(r, 'reason')
+  if (rm.accessor || (rm.present && !capturable(rm.value))) return invalidSubject
   const sm = readMember(r, 'subject')
   let t: string | undefined
   if (sm.present) {
@@ -53,9 +68,12 @@ export function targetMatch(r: Result, runtimeTarget: string): { claim: Result; 
       t = tm.value as string
     }
   }
-  if (r.status !== 'established') return { claim: r, target_match: 'not_evaluated' }
-  if (t === undefined) return { claim: r, target_match: 'missing_subject' }
-  return { claim: r, target_match: t === runtimeTarget ? 'matched' : 'mismatched' }
+  const record: Result = { claim, status: st.value as string }
+  if (rm.present) record.reason = rm.value as string
+  if (sm.present) record.subject = t === undefined ? {} : { target: t }
+  if (st.value !== 'established') return { claim: record, target_match: 'not_evaluated' }
+  if (t === undefined) return { claim: record, target_match: 'missing_subject' }
+  return { claim: record, target_match: t === runtimeTarget ? 'matched' : 'mismatched' }
 }
 
 /** A required target-bound claim meets its requirement only with matched; otherwise the refusal section 5 names. */
@@ -173,3 +191,43 @@ test('section 2 capture step: own-undefined subject, own-undefined runtime targe
   assert.equal(targetMatch(est({ get target() { throw new Error('must not be called') } }), A).target_match, 'invalid_subject', 'a throwing getter must not be invoked, and must not make targetMatch throw')
 })
 
+// aeoess follow-up after #6: the corners left open in the merge comment, one test per guard so each can be checked by mutation.
+const A2 = 'https://api.example.com/a2a'
+test('capture: status is read through its descriptor, an accessor is invalid and never invoked', () => {
+  let calls = 0
+  const r = { claim: TGT, subject: { target: A2 } } as Result
+  Object.defineProperty(r, 'status', { get() { calls++; return 'established' }, enumerable: true })
+  assert.equal(targetMatch(r, A2).target_match, 'invalid_subject')
+  assert.equal(calls, 0, 'the status getter is never invoked')
+})
+test('capture: an own status set to undefined is invalid, not absent', () => {
+  assert.equal(targetMatch({ claim: TGT, status: undefined as unknown as string, subject: { target: A2 } }, A2).target_match, 'invalid_subject')
+})
+test('capture: the claim member is read through its descriptor, a throwing claim getter is invalid and never invoked', () => {
+  let calls = 0
+  const r = { status: 'established', subject: { target: A2 } } as unknown as Result
+  Object.defineProperty(r, 'claim', { get() { calls++; throw new Error('must not be called') }, enumerable: true })
+  assert.equal(targetMatch(r, A2).target_match, 'invalid_subject')
+  assert.equal(calls, 0, 'the claim getter is never invoked')
+})
+test('capture: a throwing getOwnPropertyDescriptor trap fails closed on the subject, the request and the result', () => {
+  const trap = new Proxy({}, { getOwnPropertyDescriptor() { throw new Error('trap') } })
+  assert.equal(targetMatch({ claim: TGT, status: 'established', subject: trap }, A2).target_match, 'invalid_subject')
+  assert.equal(admitRuntimeTarget(trap as { target?: unknown }), 'invalid_target')
+  assert.equal(targetMatch(trap as Result, A2).target_match, 'invalid_subject')
+})
+test('capture: a throwing getPrototypeOf trap makes the subject not plain', () => {
+  const trap = new Proxy({ target: A2 }, { getPrototypeOf() { throw new Error('trap') } })
+  assert.equal(targetMatch({ claim: TGT, status: 'established', subject: trap }, A2).target_match, 'invalid_subject')
+})
+test('capture: the returned record is built from captured values, so mutating the result afterwards changes nothing', () => {
+  const r: Result = { claim: TGT, status: 'established', subject: { target: A2 } }
+  const m = targetMatch(r, A2)
+  r.status = 'failed'
+  ;(r.subject as { target: string }).target = 'https://b.example/a2a'
+  assert.notEqual(m.claim, r)
+  assert.equal(m.claim.status, 'established')
+  assert.deepEqual(m.claim.subject, { target: A2 })
+  assert.equal(m.target_match, 'matched')
+  assert.equal(meetsRequired(m).decision, 'admit')
+})
