@@ -18,19 +18,27 @@ type Match = 'invalid_subject' | 'not_evaluated' | 'missing_subject' | 'mismatch
 export const validTarget = (t: unknown): t is string => typeof t === 'string' && t !== '' && !/\p{Cs}/u.test(t)
 
 /** Sections 2 and 3 on a target: "required" workflow, before any component check. An absent target and an invalid one are different refusals. */
+/** Section 2: a member is present only as an OWN property whose value is not undefined. An inherited property never counts. */
+export const present = (o: object, k: string): boolean => Object.hasOwn(o, k) && (o as Record<string, unknown>)[k] !== undefined
+/** Section 2: a plain object has Object.prototype or null as its prototype (so not an array, a Date, or an object built on another prototype). */
+export const isPlain = (v: unknown): v is object => {
+  if (typeof v !== 'object' || v === null) return false
+  const p = Object.getPrototypeOf(v)
+  return p === Object.prototype || p === null
+}
+
 export function admitRuntimeTarget(req: { target?: unknown }): string | null {
-  if (!('target' in req) || req.target === undefined) return 'no_runtime_target'
+  if (!present(req, 'target')) return 'no_runtime_target'
   return validTarget(req.target) ? null : 'invalid_target'
 }
 
 /** Section 5, steps 1 to 6 in order, for a claim declared binds: "target". Returns the recorded claim and target_match. */
 export function targetMatch(r: Result, runtimeTarget: string): { claim: Result; target_match: Match } {
-  const s = r.subject
-  const isPlain = (v: unknown) => typeof v === 'object' && v !== null && !Array.isArray(v)
-  if ('subject' in r && s !== undefined && !isPlain(s)) return { claim: { claim: r.claim, status: 'unavailable', reason: 'adapter_protocol_violation:subject' }, target_match: 'invalid_subject' }
-  if (isPlain(s) && 'target' in (s as object) && !validTarget((s as { target: unknown }).target)) return { claim: { claim: r.claim, status: 'unavailable', reason: 'adapter_protocol_violation:subject' }, target_match: 'invalid_subject' }
+  const s = present(r, 'subject') ? r.subject : undefined
+  if (s !== undefined && !isPlain(s)) return { claim: { claim: r.claim, status: 'unavailable', reason: 'adapter_protocol_violation:subject' }, target_match: 'invalid_subject' }
+  if (s !== undefined && present(s, 'target') && !validTarget((s as { target: unknown }).target)) return { claim: { claim: r.claim, status: 'unavailable', reason: 'adapter_protocol_violation:subject' }, target_match: 'invalid_subject' }
   if (r.status !== 'established') return { claim: r, target_match: 'not_evaluated' }
-  const t = isPlain(s) ? (s as { target?: string }).target : undefined
+  const t = s !== undefined && present(s, 'target') ? (s as { target: string }).target : undefined
   if (t === undefined) return { claim: r, target_match: 'missing_subject' }
   return { claim: r, target_match: t === runtimeTarget ? 'matched' : 'mismatched' }
 }
@@ -117,3 +125,24 @@ test('D1 why section 3 rejects lone surrogates: sha256(target) over UTF-8 cannot
   assert.equal(validTarget('https://a.example/\uFFFD'), true)
   assert.equal(validTarget('https://a.example/\uD800'), false)
 })
+
+// aeoess review on #6 (section 2 at 5296a2e): presence means an own property whose value is not undefined; inherited never counts.
+test('section 2: inherited, prototype-polluted, non-plain and undefined members', () => {
+  const A = 'https://api.example.com/a2a'
+  const est = (subject: unknown): Result => ({ claim: TGT, status: 'established', subject })
+  assert.equal(targetMatch(est(Object.create({ target: A })), A).target_match, 'invalid_subject', 'subject built on another prototype')
+  assert.equal(targetMatch(est(new Date(0)), A).target_match, 'invalid_subject', 'Date subject is not a plain object')
+  assert.equal(targetMatch(est({ target: undefined }), A).target_match, 'missing_subject', 'own target set to undefined reads as absent')
+  assert.equal(targetMatch(est(Object.assign(Object.create(null), { target: A })), A).target_match, 'matched', 'null-prototype object is plain')
+  assert.equal(admitRuntimeTarget(Object.create({ target: A })), 'no_runtime_target', 'inherited runtime target is absent')
+  const P = Object.prototype as Record<string, unknown>
+  try {
+    P.target = A
+    assert.equal(targetMatch(est({}), A).target_match, 'missing_subject', 'Object.prototype.target must not be read as the subject target')
+    assert.equal(admitRuntimeTarget({}), 'no_runtime_target', 'Object.prototype.target must not be read as the runtime target')
+  } finally {
+    delete P.target
+  }
+  assert.equal(Object.hasOwn(Object.prototype, 'target'), false, 'Object.prototype restored')
+})
+
