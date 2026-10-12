@@ -295,3 +295,26 @@ test('capture: a revoked Proxy as the result, and a Proxy as the status, fail cl
   assert.equal(targetMatch({ claim: TGT, status: new Proxy({}, {}) as unknown as string, subject: { target: A2 } }, A2).target_match, 'invalid_subject')
 })
 
+// Outside check (babyblueviper1, #7 review): object-valued members are not capturable as strings, so they are invalid,
+// and nothing in the returned record aliases a caller object.
+test('capture: an object-valued status is invalid_subject, not not_evaluated, and the record holds no caller object', () => {
+  const st = { v: 'established' }
+  const m = targetMatch({ claim: TGT, status: st as unknown as string, subject: { target: A2 } }, A2)
+  assert.equal(m.target_match, 'invalid_subject')
+  st.v = 'mutated'
+  assert.notEqual(m.claim.status as unknown, st)
+  assert.equal(typeof m.claim.status, 'string')
+})
+test('capture: an object-valued claim or reason is invalid_subject, never matched', () => {
+  const reason = { why: 'a' }
+  for (const r of [
+    { claim: { k: 1 }, status: 'established', subject: { target: A2 } },
+    { claim: TGT, status: 'established', reason, subject: { target: A2 } },
+  ]) {
+    const m = targetMatch(r as unknown as Result, A2)
+    assert.equal(m.target_match, 'invalid_subject')
+    assert.equal(meetsRequired(m).decision === 'admit', false)
+    assert.ok(typeof m.claim.claim === 'string' || m.claim.claim === undefined)
+    assert.notEqual(m.claim.reason as unknown, reason)
+  }
+})
