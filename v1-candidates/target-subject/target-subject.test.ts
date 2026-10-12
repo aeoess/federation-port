@@ -30,8 +30,11 @@ function readMember(o: object, k: string): { present: boolean; accessor: boolean
   if ('get' in d || 'set' in d) return { present: true, accessor: true, value: undefined }
   return { present: true, accessor: false, value: d.value }
 }
-/** Section 2: a present member whose value has no JSON form (undefined, a function, a symbol, a bigint) cannot be captured. */
-const capturable = (v: unknown): boolean => v !== undefined && typeof v !== 'function' && typeof v !== 'symbol' && typeof v !== 'bigint'
+/** Section 2 for the result's own members. The v0 contract types claim, status and reason as strings (src/contract/types.ts
+ *  ClaimResult), so only a primitive string is captured. Any other value, a plain object or array included, fails capture, so a
+ *  record never holds a reference the component can change after it returns. claim and status are required, reason is optional. */
+const capturedString = (m: { present: boolean; accessor: boolean; value: unknown }): m is { present: true; accessor: false; value: string } =>
+  m.present && !m.accessor && typeof m.value === 'string'
 /** Section 2: a plain object has Object.prototype or null as its prototype (so not an array, a Date, or an object built on another prototype). */
 export const isPlain = (v: unknown): v is object => {
   if (typeof v !== 'object' || v === null) return false
@@ -50,14 +53,15 @@ export function admitRuntimeTarget(req: { target?: unknown }): string | null {
 export function targetMatch(r: Result, runtimeTarget: string): { claim: Result; target_match: Match } {
   // Section 2 capture: claim, status, reason, subject and subject.target are each read once, through their own descriptors.
   // The returned record is built from those captured values, never the component's object, so later mutation cannot change it.
+  // The refusal record holds only values captured as strings: a claim that is not one is left out, never copied by reference.
   const cm = readMember(r, 'claim')
-  const claim = (cm.accessor ? undefined : cm.value) as string
-  const invalidSubject = { claim: { claim, status: 'unavailable', reason: 'adapter_protocol_violation:subject' }, target_match: 'invalid_subject' as const }
-  if (cm.accessor || (cm.present && !capturable(cm.value))) return invalidSubject
+  const claim = capturedString(cm) ? cm.value : undefined
+  const invalidSubject = { claim: { ...(claim === undefined ? {} : { claim }), status: 'unavailable', reason: 'adapter_protocol_violation:subject' } as Result, target_match: 'invalid_subject' as const }
+  if (claim === undefined) return invalidSubject
   const st = readMember(r, 'status')
-  if (st.accessor || (st.present && !capturable(st.value))) return invalidSubject
+  if (!capturedString(st)) return invalidSubject
   const rm = readMember(r, 'reason')
-  if (rm.accessor || (rm.present && !capturable(rm.value))) return invalidSubject
+  if (rm.present && !capturedString(rm)) return invalidSubject
   const sm = readMember(r, 'subject')
   let t: string | undefined
   if (sm.present) {
@@ -68,7 +72,7 @@ export function targetMatch(r: Result, runtimeTarget: string): { claim: Result; 
       t = tm.value as string
     }
   }
-  const record: Result = { claim, status: st.value as string }
+  const record: Result = { claim, status: st.value }
   if (rm.present) record.reason = rm.value as string
   if (sm.present) record.subject = t === undefined ? {} : { target: t }
   if (st.value !== 'established') return { claim: record, target_match: 'not_evaluated' }
@@ -231,3 +235,45 @@ test('capture: the returned record is built from captured values, so mutating th
   assert.equal(m.target_match, 'matched')
   assert.equal(meetsRequired(m).decision, 'admit')
 })
+
+// Day 238, after babyblueviper1 on #7 at 7f31646: claim, status and reason as objects or other non-strings, on both paths.
+// Each record is checked for no object values and for not changing when the component mutates what it returned.
+const noObjects = (rec: unknown) => Object.values(rec as object).every(v => typeof v !== 'object' || v === null)
+for (const member of ['claim', 'status', 'reason'] as const) {
+  for (const [label, bad] of [['object', { x: 1 }], ['array', ['established']], ['String object', new String('established')], ['number', 1], ['null', null], ['boolean', true]] as const) {
+    test(`capture: ${member} as ${label} is invalid_subject, refusal record holds no caller object`, () => {
+      const r: Record<string, unknown> = { claim: TGT, status: 'established', reason: 'ok', subject: { target: A2 } }
+      r[member] = bad
+      const m = targetMatch(r as unknown as Result, A2)
+      assert.equal(m.target_match, 'invalid_subject')
+      assert.ok(noObjects(m.claim), JSON.stringify(m.claim))
+      const before = JSON.stringify(m)
+      if (bad !== null && typeof bad === 'object') (bad as Record<string, unknown>).x = 2
+      r.claim = 'changed'; r.status = 'not_established'
+      assert.equal(JSON.stringify(m), before, 'refusal record unchanged after the component mutates its result')
+    })
+  }
+}
+test('capture: claim or status absent is invalid_subject, reason absent is allowed', () => {
+  assert.equal(targetMatch({ status: 'established', subject: { target: A2 } } as unknown as Result, A2).target_match, 'invalid_subject')
+  assert.equal(targetMatch({ claim: TGT, subject: { target: A2 } } as unknown as Result, A2).target_match, 'invalid_subject')
+  assert.equal(targetMatch({ claim: TGT, status: 'established', subject: { target: A2 } }, A2).target_match, 'matched')
+})
+test('capture: accepted record does not change when the component mutates its result, its subject or the subject target', () => {
+  const subject = { target: A2 }
+  const r: Record<string, unknown> = { claim: TGT, status: 'established', reason: 'ok', subject }
+  const m = targetMatch(r as unknown as Result, A2)
+  assert.equal(m.target_match, 'matched')
+  const before = JSON.stringify(m)
+  subject.target = 'https://other.example/'; r.claim = 'x'; r.status = 'failed'; r.reason = 'y'; r.subject = { target: 'z' }
+  assert.equal(JSON.stringify(m), before)
+  assert.notEqual(m.claim.subject, subject, 'the record holds a new subject object, not the component one')
+})
+test('capture: reason as an accessor is invalid and never invoked', () => {
+  let calls = 0
+  const r = { claim: TGT, status: 'established', subject: { target: A2 } } as Result
+  Object.defineProperty(r, 'reason', { get() { calls++; return 'ok' }, enumerable: true })
+  assert.equal(targetMatch(r, A2).target_match, 'invalid_subject')
+  assert.equal(calls, 0)
+})
+
