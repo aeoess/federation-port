@@ -33,6 +33,8 @@ On a `target: "required"` workflow, checked before any component runs. Each case
 
 H1 to H3 put an invalid target (empty, lone high, lone low surrogate) inside the hashed action: the verdict still covers the action, and the target claim is `not_established` with `target_not_valid` and no subject. D1 shows why section 3 matters for section 6: `sha256()` over UTF-8 encodes a lone surrogate as the bytes of U+FFFD, so without validation `target_digest` would be the same for `x\uD800` and the valid target `x\uFFFD`.
 
+Capture (section 2): `claim`, `status` and `reason` are read once through their own descriptors and kept only as strings. An object, array, number, `null`, boolean or string object in any of them, an accessor, or a missing `claim` or `status` gives `invalid_subject`, and the refusal record holds only captured strings. Records do not change when the component later mutates what it returned, on acceptance or refusal. A status string outside the four v0 statuses gives `unavailable` (`adapter_protocol_violation:status`) and `not_evaluated`, as v0 rule 3 does.
+
 ## Readings these vectors take where the draft is silent
 
 - **`null` target.** Treated as present and not valid (`invalid_target`), not as absent (`no_runtime_target`).
@@ -42,7 +44,7 @@ H1 to H3 put an invalid target (empty, lone high, lone low surrogate) inside the
 
     ./v1-candidates/target-subject/reproduce.sh
 
-It fetches the component at its pinned commit, checks the sealed artifact digest, confirms `src/` is unchanged, regenerates `vectors.json` and checks it is byte-identical, then runs the tests. Expected: `tests 18, pass 18, fail 0`. Against verdict-check 0.3.0, S3, S6, H1 to H3 and C1 fail, since 0.3.0 reports no structured subject.
+It fetches the component at its pinned commit, checks the sealed artifact digest, confirms `src/` is unchanged, regenerates `vectors.json` and checks it is byte-identical, then runs the tests. Expected: `tests 49, pass 49, fail 0`. Against verdict-check 0.3.0, S3, S6, H1 to H3 and C1 fail, since 0.3.0 reports no structured subject.
 
 ## Limits
 

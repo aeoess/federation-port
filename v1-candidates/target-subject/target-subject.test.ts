@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto'
 
 const V = JSON.parse(readFileSync(new URL('./vectors.json', import.meta.url), 'utf8'))
 const { createAdapter } = await import('../../adapters/invinoveritas-verdict/adapter.ts')
+const { CLAIM_STATUSES } = await import('../../src/contract/types.ts')
 
 type Result = { claim: string; status: string; reason?: string; subject?: unknown }
 type Match = 'invalid_subject' | 'not_evaluated' | 'missing_subject' | 'mismatched' | 'matched'
@@ -75,6 +76,11 @@ export function targetMatch(r: Result, runtimeTarget: string): { claim: Result; 
   const record: Result = { claim, status: st.value }
   if (rm.present) record.reason = rm.value as string
   if (sm.present) record.subject = t === undefined ? {} : { target: t }
+  // v0 rule 3 (spec/CONTRACT.md, src/runtime normalizeCheckOutput): a captured status string outside the four v0 statuses makes
+  // the claim unavailable. Section 5 then reaches step 3, since the claim is not established.
+  if (!(CLAIM_STATUSES as readonly string[]).includes(st.value)) {
+    return { claim: { ...record, status: 'unavailable', reason: 'adapter_protocol_violation:status' }, target_match: 'not_evaluated' }
+  }
   if (st.value !== 'established') return { claim: record, target_match: 'not_evaluated' }
   if (t === undefined) return { claim: record, target_match: 'missing_subject' }
   return { claim: record, target_match: t === runtimeTarget ? 'matched' : 'mismatched' }
@@ -275,5 +281,17 @@ test('capture: reason as an accessor is invalid and never invoked', () => {
   Object.defineProperty(r, 'reason', { get() { calls++; return 'ok' }, enumerable: true })
   assert.equal(targetMatch(r, A2).target_match, 'invalid_subject')
   assert.equal(calls, 0)
+})
+test('capture: an unknown status string is unavailable under v0 rule 3, not invalid_subject', () => {
+  const m = targetMatch({ claim: TGT, status: 'establishd', reason: 'ok', subject: { target: A2 } }, A2)
+  assert.equal(m.target_match, 'not_evaluated')
+  assert.deepEqual([m.claim.status, m.claim.reason], ['unavailable', 'adapter_protocol_violation:status'])
+  assert.equal(meetsRequired(m).refusal, `required_claim_unavailable:${TGT}`)
+})
+test('capture: a revoked Proxy as the result, and a Proxy as the status, fail closed without throwing', () => {
+  const { proxy, revoke } = Proxy.revocable({ claim: TGT, status: 'established', subject: { target: A2 } }, {})
+  revoke()
+  assert.equal(targetMatch(proxy as Result, A2).target_match, 'invalid_subject')
+  assert.equal(targetMatch({ claim: TGT, status: new Proxy({}, {}) as unknown as string, subject: { target: A2 } }, A2).target_match, 'invalid_subject')
 })
 
