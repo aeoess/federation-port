@@ -1,0 +1,93 @@
+{
+  "contract": "federation-port/v0",
+  "id": "example.sim/refund-executor-reconcile",
+  "publisher": {
+    "name": "federation-port local simulator"
+  },
+  "maintainer": {
+    "name": "federation-port local simulator"
+  },
+  "artifact": {
+    "version": "0.1.0",
+    "entry": "adapter.ts",
+    "files": [
+      "adapter.ts"
+    ],
+    "digest": "sha256:98e5d2d338c215005c95a4e9cd656cd7b2f2b13c09dc70355dcee61ebe5d81bb"
+  },
+  "role": "execution",
+  "schemas": {
+    "output_evidence": {
+      "media_type": "application/json",
+      "description": "Raw provider HTTP response body bytes, empty when no response was received."
+    },
+    "execute_input": {
+      "type": "object"
+    }
+  },
+  "claims": [],
+  "profiles": [
+    {
+      "id": "sim-refund-reconcile-v1",
+      "description": "POST /v1/payments/{payment_id}/refunds with Idempotency-Key = operation id; GET /v1/refunds/by-key/{key} read-only lookup."
+    }
+  ],
+  "tools": [
+    {
+      "name": "refund",
+      "description": "Refund part or all of a captured payment.",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "payment_id",
+          "amount_minor",
+          "currency"
+        ],
+        "properties": {
+          "payment_id": {
+            "type": "string",
+            "pattern": "^pay_[A-Za-z0-9]+$"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          }
+        }
+      }
+    }
+  ],
+  "privileges_requested": [
+    "secret:provider_api_key",
+    "side_effect:refund"
+  ],
+  "data_destinations": [
+    "http://127.0.0.1:*"
+  ],
+  "keys": [
+    {
+      "id": "provider_api_key",
+      "purpose": "Bearer credential for the simulated provider",
+      "held_by": "customer",
+      "lifecycle": "Generated per test run, never persisted"
+    }
+  ],
+  "license": {
+    "spdx": "UNLICENSED",
+    "attribution": "Local prototype, not distributed"
+  },
+  "idempotency": {
+    "retention_ms": 600000,
+    "measured_from": "provider_first_receipt"
+  },
+  "reconciliation": {
+    "method": "GET",
+    "endpoint": "/v1/refunds/by-key/{idempotency_key}",
+    "read_only": true,
+    "finality": "a not_found reported final with final_scope key is a provider cancellation: no request with that key can settle afterwards"
+  }
+}
