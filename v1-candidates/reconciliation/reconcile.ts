@@ -16,6 +16,7 @@
 //  5. Budgets in the store, so a restart cannot reset them.
 import { createHash } from 'node:crypto'
 import { digestJson } from '../../src/runtime/canonical.ts'
+import { boundReason } from '../../src/runtime/runtime.ts'
 import type { Runtime, SubmitRequest, SubmitResult } from '../../src/runtime/runtime.ts'
 import type { OperationRow, Store } from '../../src/runtime/store.ts'
 
@@ -124,7 +125,8 @@ export type Decision =
  */
 export function decide(r: ReconcileResult, c: { policy: ReconciliationPolicy; lookupInsideRetention: boolean; attemptInFlight: boolean }): Decision {
   if (r.outcome === 'provider_confirmed') return { kind: 'confirm' }
-  if (r.outcome !== 'absent') return { kind: 'stay_unknown', reason: r.reason ? `lookup_unknown:${r.reason}` : 'lookup_unknown' }
+  // Section 9: a reason is a code of at most 120 UTF-16 units, cut on a grapheme boundary, prefix included.
+  if (r.outcome !== 'absent') return { kind: 'stay_unknown', reason: boundReason(r.reason ? `lookup_unknown:${r.reason}` : 'lookup_unknown') }
   const t = c.policy.trust
   if (!t || !t.lookup_complete || !t.accepts_key_finality) return { kind: 'stay_unknown', reason: 'absent_not_trusted' }
   if (!r.authoritative) return { kind: 'stay_unknown', reason: 'absent_not_authoritative' }
@@ -235,7 +237,8 @@ export class Reconciler {
   }
 
   private setStatus(opId: string, status: ReconciliationStatus, reason: string | null, at: string): void {
-    this.store.db.prepare('UPDATE reconciliation SET status = ?, status_reason = ?, updated_at = ? WHERE operation_id = ?').run(status, reason, at, opId)
+    this.store.db.prepare('UPDATE reconciliation SET status = ?, status_reason = ?, updated_at = ? WHERE operation_id = ?')
+      .run(status, reason === null ? null : boundReason(reason), at, opId)
   }
 
   /**
@@ -263,7 +266,7 @@ export class Reconciler {
         result = { outcome: 'unknown', authoritative: false, reason: 'adapter_protocol_violation', evidence: new Uint8Array() }
       }
     } catch (e) {
-      result = { outcome: 'unknown', authoritative: false, reason: (e as Error).message.slice(0, 120), evidence: new Uint8Array() }
+      result = { outcome: 'unknown', authoritative: false, reason: boundReason((e as Error).message), evidence: new Uint8Array() }
     }
     return this.store.tx(() => this.apply(opId, seq, result))
   }
@@ -329,6 +332,15 @@ export class Reconciler {
     const started = Date.parse((this.store.db.prepare('SELECT started_at FROM reconciliation_lookups WHERE operation_id = ? AND seq = ?').get(opId, seq) as { started_at: string }).started_at)
     const lookupInsideRetention = insideRetention(started, this.firstDispatchMs(opId), retention, policy.lookup_timeout_ms, policy.max_skew_ms)
     const d = decide(r, { policy, lookupInsideRetention, attemptInFlight: this.inFlight(row, nowMs) })
+    // Section 9: one usage row per component per logical operation, `calls` counting invocations and
+    // `outcome` the last state. A lookup invokes the executor component (read-only), so it counts as a
+    // call, and the row's outcome follows the operation state this lookup leaves behind. An operator
+    // decision is not a component invocation and leaves usage alone.
+    const component = this.rt.component(executor)!
+    const finish = (outcome: ReconcileOutcome): ReconcileOutcome => {
+      this.store.bumpUsage(opId, executor, component.manifest.artifact.version, component.manifest.role, this.store.getOperation(opId)!.state, at)
+      return outcome
+    }
     const evidenceDigest = sha256(r.evidence)
     this.store.db.prepare(`INSERT OR REPLACE INTO evidence VALUES (?, ?, ?, ?, ?)`).run(opId, executor, `reconcile:${seq}`, evidenceDigest, r.evidence)
     this.store.db.prepare(`UPDATE reconciliation_lookups SET ended_at = ?, outcome = ?, authoritative = ?, final = ?, decision = ?, reason = ?,
@@ -355,7 +367,7 @@ export class Reconciler {
         })
       }
       this.setStatus(opId, 'resolved_confirmed', null, at)
-      return { operation_id: opId, state: 'provider_confirmed', status: 'resolved_confirmed', looked_up: true }
+      return finish({ operation_id: opId, state: 'provider_confirmed', status: 'resolved_confirmed', looked_up: true })
     }
     if (d.kind === 'close_absent' && rec.status !== 'resolved_absent') {
       // Only an operation the runtime itself holds as unknown closes. A dispatched row whose worker
@@ -364,7 +376,7 @@ export class Reconciler {
         this.store.db.prepare(`UPDATE operations SET state = 'failed', retriable = 0, lease_until = 0, updated_at = ? WHERE operation_id = ?`).run(at, opId)
         this.event(opId, at, 'reconciled_absent', { lookup: seq, evidence: evidenceDigest })
         this.setStatus(opId, 'resolved_absent', null, at)
-        return { operation_id: opId, state: 'failed', status: 'resolved_absent', reason: 'reconciled_absent', looked_up: true }
+        return finish({ operation_id: opId, state: 'failed', status: 'resolved_absent', reason: 'reconciled_absent', looked_up: true })
       }
     }
     const current = this.reconciliation(opId)!
@@ -372,9 +384,9 @@ export class Reconciler {
     if (current.status === 'pending' && current.lookups >= lookupBudget(current, policy)) {
       this.setStatus(opId, 'operator_required', 'budget_exhausted', at)
       this.event(opId, at, 'operator_required', { reason: 'budget_exhausted' })
-      return { operation_id: opId, state: row.state, status: 'operator_required', reason: 'budget_exhausted', looked_up: true }
+      return finish({ operation_id: opId, state: row.state, status: 'operator_required', reason: 'budget_exhausted', looked_up: true })
     }
-    return { operation_id: opId, state: this.store.getOperation(opId)!.state, status: current.status, ...(reason ? { reason } : {}), looked_up: true }
+    return finish({ operation_id: opId, state: this.store.getOperation(opId)!.state, status: current.status, ...(reason ? { reason } : {}), looked_up: true })
   }
 
   /**
@@ -405,7 +417,7 @@ export class Reconciler {
       const row = this.store.getOperation(opId)!
       const digest = sha256(d.evidence)
       this.store.db.prepare('INSERT OR REPLACE INTO evidence VALUES (?, ?, ?, ?, ?)').run(opId, `operator:${d.operator}`, `operator_decision:${rec.lookups}`, digest, d.evidence)
-      this.event(opId, at, 'operator_decision', { operator: d.operator, conclusion: d.conclusion, note: (d.note ?? '').slice(0, 120), evidence: digest, effect_state: row.state })
+      this.event(opId, at, 'operator_decision', { operator: d.operator, conclusion: d.conclusion, note: boundReason(d.note ?? ''), evidence: digest, effect_state: row.state })
       this.setStatus(opId, 'operator_resolved', d.conclusion, at)
       return this.reconciliation(opId)!
     })

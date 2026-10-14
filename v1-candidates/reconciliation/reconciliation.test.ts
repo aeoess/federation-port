@@ -360,3 +360,64 @@ test('O1 an operator decision is its own provenance entry; the effect state and 
     assert.throws(() => w.rec.recordOperatorDecision(w.req.operation_id, { operator: 'x', conclusion: 'effect_exists', evidence: new Uint8Array() }), /operator_decision_not_required/)
   } finally { await w.close() }
 })
+
+// ── Section 9 on the reconciliation rows: reasons are cut, usage is the last state ──
+
+test('E5/E9 lookup reasons, thrown errors and operator notes are cut to 120 UTF-16 units on a grapheme boundary, stored and returned alike', async () => {
+  const w = await world()
+  try {
+    w.provider.hold(1)
+    await w.rt.submit(w.req)
+    const exec = w.rt.component(RX)!.adapter as unknown as { reconcile: (q: unknown) => Promise<ReconcileResult> }
+    exec.reconcile = async () => ({ outcome: 'unknown', authoritative: false, reason: 'r'.repeat(500), evidence: new Uint8Array() })
+    const first = await w.rec.reconcile(w.req.operation_id)
+    assert.equal(first.reason, 'lookup_unknown:' + 'r'.repeat(105))
+    assert.equal(lookups(w, w.req.operation_id)[0].reason, first.reason)
+    // 'lookup_unknown:' is 15 units; 104 letters then a two-unit emoji would end at 121. The cut falls
+    // before the emoji, so no lone surrogate is stored or returned.
+    exec.reconcile = async () => ({ outcome: 'unknown', authoritative: false, reason: 'a'.repeat(104) + '\u{1F44D}' + 'b'.repeat(50), evidence: new Uint8Array() })
+    const second = await w.rec.reconcile(w.req.operation_id)
+    assert.equal(second.reason, 'lookup_unknown:' + 'a'.repeat(104))
+    assert.ok(second.reason!.isWellFormed())
+    // A thrown error is cut the same way; the third lookup spends the budget, so the row carries it.
+    exec.reconcile = async () => { throw new Error('é'.repeat(200)) } // e + combining acute, two units each
+    const third = await w.rec.reconcile(w.req.operation_id)
+    assert.equal(third.status, 'operator_required')
+    const stored = lookups(w, w.req.operation_id)[2].reason!
+    assert.equal(stored, 'lookup_unknown:' + 'é'.repeat(52)) // 15 + 104 = 119; the next grapheme would make 121
+    assert.ok(stored.length <= 120)
+    // The operator's note is a reason too.
+    w.rec.recordOperatorDecision(w.req.operation_id, { operator: 'ops', conclusion: 'no_effect', note: 'n'.repeat(119) + '\u{1F44D}', evidence: new Uint8Array([1]) })
+    const note = events(w, w.req.operation_id).find(e => e.kind === 'operator_decision')!.detail.note as string
+    assert.equal(note, 'n'.repeat(119))
+  } finally { await w.close() }
+})
+
+test('U1 usage is the last state: a reconciled absence and a reconciled confirmation update the executor usage row, and each lookup counts as a call', async () => {
+  const usage = (w: World) => w.rt.store.usage(w.req.operation_id).find(u => u.component === RX) as { calls: number; outcome: string }
+  const absent = await world()
+  try {
+    absent.provider.hold(1)
+    await absent.rt.submit(absent.req)
+    const before = usage(absent)
+    assert.equal(before.outcome, 'unknown')
+    absent.provider.cancel(absent.req.operation_id)
+    assert.equal((await absent.rec.reconcile(absent.req.operation_id)).state, 'failed')
+    assert.deepEqual([usage(absent).calls, usage(absent).outcome], [before.calls + 1, 'failed'])
+  } finally { await absent.close() }
+  const confirmed = await world()
+  try {
+    confirmed.provider.hold(1)
+    await confirmed.rt.submit(confirmed.req)
+    const before = usage(confirmed)
+    assert.equal(before.outcome, 'unknown')
+    // An inconclusive lookup counts as a call and leaves the outcome as it is.
+    confirmed.provider.setLookupDown(true)
+    assert.equal((await confirmed.rec.reconcile(confirmed.req.operation_id)).state, 'unknown')
+    assert.deepEqual([usage(confirmed).calls, usage(confirmed).outcome], [before.calls + 1, 'unknown'])
+    confirmed.provider.setLookupDown(false)
+    confirmed.provider.settle(confirmed.req.operation_id)
+    assert.equal((await confirmed.rec.reconcile(confirmed.req.operation_id)).state, 'provider_confirmed')
+    assert.deepEqual([usage(confirmed).calls, usage(confirmed).outcome], [before.calls + 2, 'provider_confirmed'])
+  } finally { await confirmed.close() }
+})

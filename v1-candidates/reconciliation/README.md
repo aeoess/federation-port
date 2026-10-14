@@ -2,7 +2,7 @@
 
 A candidate for [#2](https://github.com/aeoess/federation-port/issues/2). It is not part of contract v0 or any other version, and changes nothing under `src/`. It runs next to the v0 `Runtime`, on the same SQLite store, in three tables of its own (`reconciliation`, `reconciliation_lookups`, `reconciliation_events`).
 
-The model is [`formal/tla/LeaseReconcile.tla`](https://github.com/darklordVirtual/REMORA-research/blob/master/formal/tla/LeaseReconcile.tla) in REMORA-research. Each rule below matches a configuration there that holds, and each assumption the rule relies on has a configuration that is violated without it.
+The model is [`formal/tla/LeaseReconcile.tla`](https://github.com/darklordVirtual/REMORA-research/blob/95a38b27a202b0c3916c6b32a51c2b1f7b9ab60c/formal/tla/LeaseReconcile.tla) in REMORA-research, pinned to the revision TLC 1.7.4 was run at. Each rule below matches a configuration there that holds, and each assumption the rule relies on has a configuration that is violated without it.
 
 ## The two failure cases
 
@@ -64,6 +64,12 @@ The lookup budget is stored with the operation at its first lookup. A policy can
 
 An operator decision (`recordOperatorDecision`) is its own provenance entry with its own evidence digest. It does not rewrite the effect state or the attempts.
 
+## Provenance and usage (section 9)
+
+The candidate's rows follow the two section 9 rules the v0 runtime applies to its own. Every reason it stores or returns is cut with v0's `boundReason`: at most 120 UTF-16 code units, on a grapheme boundary, prefix included, so `lookup_unknown:` plus a long adapter reason is 120 units, not 135 or 515. That covers the lookup row's `reason`, the status reason, a thrown error's message and the operator's note.
+
+Usage: a lookup invokes the executor component, read-only, so it counts in the executor's `calls`, and after each lookup the row's `outcome` is the operation state the lookup left behind: `failed` after a reconciled absence, `provider_confirmed` after a reconciled confirmation, `unknown` after an inconclusive one. An operator decision is not a component invocation and leaves the usage row alone.
+
 Reaching `operator_required` within a bounded number of steps needs a scheduling assumption: an operation that can be reconciled eventually is, because a caller resubmits it or the runtime sweeps (`sweep()`). Without that, nothing forces progress (`reconcile_no_scheduling`, violated). A budget that a restart can reset breaks the bound (`reconcile_volatile_budget`, violated).
 
 ## Answers to the three open questions on #2
@@ -76,7 +82,7 @@ Reaching `operator_required` within a bounded number of steps needs a scheduling
 
     ./v1-candidates/reconciliation/reproduce.sh
 
-It confirms that `src/` is unchanged and checks the executor's sealed artifact digest. Then it runs the candidate tests (expected: `tests 17, pass 17, fail 0`) and the v0 suite next to them, to show that the candidate's tables do not disturb v0.
+It confirms that `src/` is unchanged and checks the executor's sealed artifact digest. Then it runs the candidate tests (expected: `tests 19, pass 19, fail 0`) and the v0 suite next to them, to show that the candidate's tables do not disturb v0.
 
 ## Limits
 
@@ -84,3 +90,6 @@ It confirms that `src/` is unchanged and checks the executor's sealed artifact d
 - `reconcile()` is read-only by declaration. As with `execute`, V0 cannot confine what an adapter does (§10). The manifest names the endpoint it uses.
 - The retry rule is a stand-in outside `claimDispatch` (see above).
 - The model is finite: three attempts and a lookup budget of two. "Holds" means no violation in that space.
+- `effect_after_expiry` is recorded from a lookup's `settled_at` only. A late confirmation that arrives through the attempt itself after `valid_until` (B5) is not classified; the attempt row keeps its own timestamps.
+- A `dispatched` row whose worker died is never closed by a final absence. The sweep takes it to `operator_required` once its lease has lapsed, which is the safe direction.
+- After `operator_resolved` with `no_effect`, a later confirmation from the provider wins as always, but it is not recorded as a contradiction the way `absence_contradicted` is; the operator's conclusion stays in its own event.
